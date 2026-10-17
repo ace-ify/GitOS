@@ -52,6 +52,7 @@ from backend.polyglot import extract_universal_ast, stitch_cross_file_graph, det
 from backend.github_client import get_github_client
 from backend.compressor import get_groq_reasoner
 from backend.auth import auth_router, get_session
+from backend.webhooks import webhook_router
 
 try:
     from graph.client import get_graph_client
@@ -65,6 +66,8 @@ groq_reasoner = get_groq_reasoner()
 
 # Mount OAuth & authentication endpoints
 app.include_router(auth_router)
+# Mount GitHub Webhooks ingest endpoint
+app.include_router(webhook_router)
 
 
 # ==============================================================================
