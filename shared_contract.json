@@ -1,0 +1,363 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GitOS_AnalysisContract",
+  "description": "Strict JSON Schema governing the API communication contract between the GitOS FastAPI backend and Next.js frontend.",
+  "type": "object",
+  "required": [
+    "analysis_id",
+    "url_parsed",
+    "user_mode",
+    "risk_score",
+    "verdict",
+    "summary",
+    "deterministic_checks",
+    "blast_radius_nodes",
+    "blast_radius_edges",
+    "suggested_diff",
+    "action_pills",
+    "execution_metadata"
+  ],
+  "properties": {
+    "analysis_id": {
+      "type": "string",
+      "description": "Unique UUID for the analysis run and telemetry session",
+      "format": "uuid"
+    },
+    "url_parsed": {
+      "type": "object",
+      "description": "Metadata extracted by universal omnibox parser",
+      "required": ["raw_url", "url_type", "owner", "repo"],
+      "properties": {
+        "raw_url": { "type": "string", "format": "uri" },
+        "url_type": {
+          "type": "string",
+          "enum": ["repo", "pull", "issue", "blob"]
+        },
+        "owner": { "type": "string" },
+        "repo": { "type": "string" },
+        "target_id": {
+          "type": ["string", "integer", "null"],
+          "description": "PR number or issue number if applicable"
+        },
+        "path": {
+          "type": ["string", "null"],
+          "description": "Relative file path when inspecting a blob"
+        },
+        "ref": {
+          "type": ["string", "null"],
+          "description": "Branch, tag, or commit SHA"
+        }
+      }
+    },
+    "user_mode": {
+      "type": "string",
+      "enum": ["maintainer", "contributor", "guest"],
+      "description": "Permissions-derived user mode controlling UI view and action dock"
+    },
+    "risk_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Composite risk score calculated from deterministic graph filters (0 = pristine, 100 = toxic/critical)"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "CLEAN",
+        "LOW_RISK",
+        "NEEDS_TESTS",
+        "AI_SLOP_SUSPECTED",
+        "CRITICAL_BLAST",
+        "RULE_VIOLATION"
+      ],
+      "description": "Primary high-level classification badge"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Concise deterministic or single-shot LLM triage synthesis"
+    },
+    "deterministic_checks": {
+      "type": "object",
+      "description": "Results of the 4 zero-token graph pre-filters",
+      "required": [
+        "untested_call_graph",
+        "ast_vs_text_ratio",
+        "dead_code",
+        "maintainer_rules"
+      ],
+      "properties": {
+        "untested_call_graph": {
+          "type": "object",
+          "required": ["flagged", "score", "untested_functions"],
+          "properties": {
+            "flagged": { "type": "boolean" },
+            "score": { "type": "number", "minimum": 0, "maximum": 1 },
+            "untested_functions": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "ast_vs_text_ratio": {
+          "type": "object",
+          "required": [
+            "flagged",
+            "ast_node_delta",
+            "text_diff_lines",
+            "ratio",
+            "is_cosmetic_slop"
+          ],
+          "properties": {
+            "flagged": { "type": "boolean" },
+            "ast_node_delta": { "type": "integer" },
+            "text_diff_lines": { "type": "integer" },
+            "ratio": { "type": "number" },
+            "is_cosmetic_slop": { "type": "boolean" }
+          }
+        },
+        "dead_code": {
+          "type": "object",
+          "required": ["flagged", "dead_symbols"],
+          "properties": {
+            "flagged": { "type": "boolean" },
+            "dead_symbols": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "maintainer_rules": {
+          "type": "object",
+          "required": ["flagged", "violations"],
+          "properties": {
+            "flagged": { "type": "boolean" },
+            "violations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["rule_id", "description", "offending_node"],
+                "properties": {
+                  "rule_id": { "type": "string" },
+                  "description": { "type": "string" },
+                  "offending_node": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "blast_radius_nodes": {
+      "type": "array",
+      "description": "Nodes affected within 1..3 hops of the modified AST symbols",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "type",
+          "hop_distance",
+          "change_type"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["file", "class", "function", "test", "variable"]
+          },
+          "file_path": { "type": "string" },
+          "line_range": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "hop_distance": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "change_type": {
+            "type": "string",
+            "enum": [
+              "added",
+              "modified",
+              "deleted",
+              "affected_caller",
+              "unaffected"
+            ]
+          },
+          "incoming_calls": { "type": "integer" },
+          "outgoing_calls": { "type": "integer" }
+        }
+      }
+    },
+    "blast_radius_edges": {
+      "type": "array",
+      "description": "Relationships between AST nodes in the blast radius subgraph",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "relationship"],
+        "properties": {
+          "source": { "type": "string" },
+          "target": { "type": "string" },
+          "relationship": {
+            "type": "string",
+            "enum": ["CALLS", "DEFINES", "IMPORTS", "TESTED_BY", "VIOLATES"]
+          },
+          "weight": { "type": "number" }
+        }
+      }
+    },
+    "suggested_diff": {
+      "type": ["string", "null"],
+      "description": "Unified diff patch for auto-fix or missing test generation"
+    },
+    "action_pills": {
+      "type": "array",
+      "description": "Contextual action triggers shown on the interactive dock",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "action_type",
+          "is_destructive",
+          "description"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "icon": { "type": "string" },
+          "action_type": {
+            "type": "string",
+            "enum": [
+              "gh_comment",
+              "gh_label",
+              "gh_close",
+              "gh_pr_draft",
+              "groq_explain",
+              "generate_test",
+              "add_maintainer_rule"
+            ]
+          },
+          "is_destructive": { "type": "boolean" },
+          "description": { "type": "string" },
+          "payload": { "type": "object" }
+        }
+      }
+    },
+    "execution_metadata": {
+      "type": "object",
+      "required": ["commit_sha", "cached_replay", "latency_ms", "timestamp"],
+      "properties": {
+        "commit_sha": { "type": "string" },
+        "cached_replay": { "type": "boolean" },
+        "latency_ms": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "example": {
+    "analysis_id": "7f13b6f9-768a-4c28-98f9-43c7b8e56112",
+    "url_parsed": {
+      "raw_url": "https://github.com/fastapi/fastapi/pull/9999",
+      "url_type": "pull",
+      "owner": "fastapi",
+      "repo": "fastapi",
+      "target_id": "9999",
+      "path": null,
+      "ref": "feat/refactor-routing"
+    },
+    "user_mode": "maintainer",
+    "risk_score": 82,
+    "verdict": "CRITICAL_BLAST",
+    "summary": "Modified router parameter signature affects 14 downstream callers across 3 files with 0 test updates detected.",
+    "deterministic_checks": {
+      "untested_call_graph": {
+        "flagged": true,
+        "score": 0.85,
+        "untested_functions": ["APIRouter.add_api_route", "RoutingEngine.dispatch"]
+      },
+      "ast_vs_text_ratio": {
+        "flagged": false,
+        "ast_node_delta": 42,
+        "text_diff_lines": 58,
+        "ratio": 0.72,
+        "is_cosmetic_slop": false
+      },
+      "dead_code": {
+        "flagged": false,
+        "dead_symbols": []
+      },
+      "maintainer_rules": {
+        "flagged": true,
+        "violations": [
+          {
+            "rule_id": "RULE_NO_DIRECT_ENGINE_TOUCH",
+            "description": "Public router module cannot directly call internal dispatch engine without adapter",
+            "offending_node": "APIRouter.add_api_route -> RoutingEngine.dispatch"
+          }
+        ]
+      }
+    },
+    "blast_radius_nodes": [
+      {
+        "id": "fastapi/routing.py::APIRouter.add_api_route",
+        "label": "APIRouter.add_api_route",
+        "type": "function",
+        "file_path": "fastapi/routing.py",
+        "line_range": [140, 185],
+        "hop_distance": 0,
+        "change_type": "modified",
+        "incoming_calls": 14,
+        "outgoing_calls": 3
+      },
+      {
+        "id": "fastapi/applications.py::FastAPI.include_router",
+        "label": "FastAPI.include_router",
+        "type": "function",
+        "file_path": "fastapi/applications.py",
+        "line_range": [82, 110],
+        "hop_distance": 1,
+        "change_type": "affected_caller",
+        "incoming_calls": 26,
+        "outgoing_calls": 2
+      }
+    ],
+    "blast_radius_edges": [
+      {
+        "source": "fastapi/applications.py::FastAPI.include_router",
+        "target": "fastapi/routing.py::APIRouter.add_api_route",
+        "relationship": "CALLS",
+        "weight": 1.0
+      }
+    ],
+    "suggested_diff": "--- a/tests/test_routing.py\n+++ b/tests/test_routing.py\n@@ -24,6 +24,12 @@ def test_router_signature():\n+    router = APIRouter()\n+    # Validates updated parameter signature backward compatibility\n+    router.add_api_route('/ping', lambda: {'status': 'ok'})\n",
+    "action_pills": [
+      {
+        "id": "pill_request_tests",
+        "label": "Request Test Coverage",
+        "icon": "shield-alert",
+        "action_type": "gh_comment",
+        "is_destructive": false,
+        "description": "Post triage report detailing the 14 untested caller dependencies to the PR.",
+        "payload": {
+          "comment_template": "blast_radius_warning"
+        }
+      },
+      {
+        "id": "pill_apply_test_diff",
+        "label": "Push Generated Test Patch",
+        "icon": "git-commit",
+        "action_type": "gh_pr_draft",
+        "is_destructive": false,
+        "description": "Create a branch and test PR covering the updated signature.",
+        "payload": {}
+      }
+    ],
+    "execution_metadata": {
+      "commit_sha": "a1b2c3d4e5f67890123456789abcdef012345678",
+      "cached_replay": false,
+      "latency_ms": 340,
+      "timestamp": "2026-10-17T13:40:00Z"
+    }
+  }
+}
