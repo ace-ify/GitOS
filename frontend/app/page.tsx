@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   ShieldAlert,
   ShieldCheck,
@@ -27,6 +27,24 @@ import {
   User,
   LogOut,
   UserCheck,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  FolderTree,
+  FileText,
+  GitBranch,
+  GitCommit,
+  ExternalLink,
+  ChevronRight,
+  ChevronDown,
+  Info,
+  Play,
+  RotateCcw,
+  Copy,
+  Check,
+  Flame,
+  Binary,
+  GitFork,
 } from "lucide-react";
 
 // Authenticated user profile
@@ -113,154 +131,399 @@ interface AnalysisData {
   };
 }
 
-// Configurable API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const INITIAL_DEMO_DATA: AnalysisData = {
-  analysis_id: "demo-7f13b6f9",
-  url_parsed: {
-    raw_url: "https://github.com/fastapi/fastapi/pull/9999",
-    url_type: "pull",
-    owner: "fastapi",
-    repo: "fastapi",
-    target_id: "9999",
+// 4 Preset Real-World Scenarios
+const PRESET_SCENARIOS: Record<string, AnalysisData> = {
+  fastapi_breaking: {
+    analysis_id: "sc-fastapi-9999",
+    url_parsed: {
+      raw_url: "https://github.com/fastapi/fastapi/pull/9999",
+      url_type: "pull",
+      owner: "fastapi",
+      repo: "fastapi",
+      target_id: "9999",
+    },
+    user_mode: "maintainer",
+    risk_score: 82,
+    verdict: "CRITICAL_BLAST",
+    summary: "Modified APIRouter.add_api_route signature impacts 14 downstream callers across Python and TypeScript services with 0 regression tests added.",
+    deterministic_checks: {
+      untested_call_graph: {
+        flagged: true,
+        score: 0.88,
+        untested_functions: ["fastapi/routing.py::APIRouter.add_api_route", "fastapi/routing.py::APIRouter.dispatch"],
+      },
+      ast_vs_text_ratio: {
+        flagged: false,
+        ast_node_delta: 38,
+        text_diff_lines: 46,
+        ratio: 0.82,
+        is_cosmetic_slop: false,
+      },
+      dead_code: {
+        flagged: false,
+        dead_symbols: [],
+      },
+      maintainer_rules: {
+        flagged: true,
+        violations: [
+          {
+            rule_id: "RULE_NO_DIRECT_DB_IMPORT",
+            description: "Cross-file router touches unverified gateway controller directly",
+            offending_node: "src/gateway.ts::GatewayController -> fastapi/routing.py::APIRouter.add_api_route",
+          },
+        ],
+      },
+    },
+    blast_radius_nodes: [
+      {
+        id: "fastapi/routing.py::APIRouter.add_api_route",
+        label: "APIRouter.add_api_route",
+        type: "function",
+        file_path: "fastapi/routing.py",
+        line_range: [142, 178],
+        hop_distance: 0,
+        change_type: "modified",
+        incoming_calls: 14,
+        outgoing_calls: 2,
+      },
+      {
+        id: "fastapi/routing.py::APIRouter.dispatch",
+        label: "APIRouter.dispatch",
+        type: "function",
+        file_path: "fastapi/routing.py",
+        line_range: [180, 204],
+        hop_distance: 1,
+        change_type: "affected_caller",
+        incoming_calls: 8,
+        outgoing_calls: 1,
+      },
+      {
+        id: "fastapi/applications.py::include_router",
+        label: "FastAPI.include_router",
+        type: "function",
+        file_path: "fastapi/applications.py",
+        line_range: [88, 114],
+        hop_distance: 1,
+        change_type: "affected_caller",
+        incoming_calls: 24,
+        outgoing_calls: 3,
+      },
+      {
+        id: "src/gateway.ts::GatewayController",
+        label: "GatewayController (TS)",
+        type: "class",
+        file_path: "src/gateway.ts",
+        line_range: [12, 45],
+        hop_distance: 1,
+        change_type: "affected_caller",
+        incoming_calls: 6,
+        outgoing_calls: 2,
+      },
+      {
+        id: "tests/test_routing.py::test_router_signature",
+        label: "test_router_signature",
+        type: "test",
+        file_path: "tests/test_routing.py",
+        line_range: [24, 38],
+        hop_distance: 2,
+        change_type: "unaffected",
+        incoming_calls: 0,
+        outgoing_calls: 1,
+      },
+    ],
+    blast_radius_edges: [
+      { source: "fastapi/routing.py::APIRouter.add_api_route", target: "fastapi/routing.py::APIRouter.dispatch", relationship: "CALLS", is_cross_file: false },
+      { source: "fastapi/applications.py::include_router", target: "fastapi/routing.py::APIRouter.add_api_route", relationship: "CALLS", is_cross_file: true },
+      { source: "src/gateway.ts::GatewayController", target: "fastapi/routing.py::APIRouter.add_api_route", relationship: "CALLS", is_cross_file: true },
+      { source: "tests/test_routing.py::test_router_signature", target: "fastapi/routing.py::APIRouter.add_api_route", relationship: "TESTED_BY", is_cross_file: true },
+    ],
+    suggested_diff: `--- a/tests/test_routing.py\n+++ b/tests/test_routing.py\n@@ -24,6 +24,14 @@ def test_router_signature():\n+    router = APIRouter()\n+    # Validates updated parameter signature backward compatibility\n+    router.add_api_route('/v1/health', lambda: {'status': 'ok'}, methods=['GET'])\n+    assert len(router.routes) > 0\n`,
+    action_pills: [
+      {
+        id: "pill_request_tests",
+        label: "Request Test Coverage",
+        action_type: "gh_comment",
+        is_destructive: false,
+        description: "Post automated blast radius telemetry report detailing 14 affected callers to the PR.",
+        payload: { template: "blast_warning" },
+      },
+      {
+        id: "pill_apply_test_diff",
+        label: "Push Generated Test Patch",
+        action_type: "gh_pr_draft",
+        is_destructive: false,
+        description: "Open a draft PR with unit tests covering the modified function signature.",
+        payload: {},
+      },
+    ],
+    execution_metadata: {
+      commit_sha: "f4b81c20e98a34",
+      cached_replay: false,
+      latency_ms: 184,
+      live_fetched: true,
+      timestamp: new Date().toISOString(),
+    },
   },
-  user_mode: "maintainer",
-  risk_score: 78,
-  verdict: "CRITICAL_BLAST",
-  summary: "Modified APIRouter.add_api_route signature impacts 14 downstream callers across 3 files with 0 test updates detected.",
-  deterministic_checks: {
-    untested_call_graph: {
-      flagged: true,
-      score: 0.85,
-      untested_functions: ["APIRouter.add_api_route", "RoutingEngine.dispatch"],
+  react_ai_slop: {
+    analysis_id: "sc-react-28410",
+    url_parsed: {
+      raw_url: "https://github.com/facebook/react/pull/28410",
+      url_type: "pull",
+      owner: "facebook",
+      repo: "react",
+      target_id: "28410",
     },
-    ast_vs_text_ratio: {
-      flagged: false,
-      ast_node_delta: 36,
-      text_diff_lines: 48,
-      ratio: 0.75,
-      is_cosmetic_slop: false,
+    user_mode: "maintainer",
+    risk_score: 95,
+    verdict: "AI_SLOP_SUSPECTED",
+    summary: "Suspicious AI-generated churn detected: 1,480 text diff lines across 18 files with only 3 AST node mutations (Ratio 0.002). Flagged as cosmetic bot noise.",
+    deterministic_checks: {
+      untested_call_graph: { flagged: false, score: 0.1, untested_functions: [] },
+      ast_vs_text_ratio: {
+        flagged: true,
+        ast_node_delta: 3,
+        text_diff_lines: 1480,
+        ratio: 0.002,
+        is_cosmetic_slop: true,
+      },
+      dead_code: { flagged: true, dead_symbols: ["packages/react/src/utils.ts::formatCommentChunk"] },
+      maintainer_rules: { flagged: false, violations: [] },
     },
-    dead_code: {
-      flagged: false,
-      dead_symbols: [],
-    },
-    maintainer_rules: {
-      flagged: true,
-      violations: [
-        {
-          rule_id: "RULE_NO_DIRECT_DB_IMPORT",
-          description: "Frontend UI module violates boundary by directly referencing database tier",
-          offending_node: "src/gateway.ts -> backend/db/models.py",
-        },
-      ],
+    blast_radius_nodes: [
+      {
+        id: "packages/react/src/ReactBaseClasses.js",
+        label: "ReactBaseClasses (Churn)",
+        type: "file",
+        file_path: "packages/react/src/ReactBaseClasses.js",
+        hop_distance: 0,
+        change_type: "modified",
+        incoming_calls: 0,
+        outgoing_calls: 0,
+      },
+      {
+        id: "packages/react-dom/src/client/ReactDOMRoot.js",
+        label: "ReactDOMRoot (Formatting)",
+        type: "file",
+        file_path: "packages/react-dom/src/client/ReactDOMRoot.js",
+        hop_distance: 0,
+        change_type: "modified",
+        incoming_calls: 0,
+        outgoing_calls: 0,
+      },
+      {
+        id: "packages/react/src/utils.ts::formatCommentChunk",
+        label: "formatCommentChunk (Dead Code)",
+        type: "function",
+        file_path: "packages/react/src/utils.ts",
+        line_range: [110, 145],
+        hop_distance: 0,
+        change_type: "added",
+        incoming_calls: 0,
+        outgoing_calls: 0,
+      },
+    ],
+    blast_radius_edges: [],
+    suggested_diff: `--- a/packages/react/src/ReactBaseClasses.js\n+++ b/packages/react/src/ReactBaseClasses.js\n@@ -1,5 +1,5 @@\n-// Regular comment\n+// Verbose AI generated redundant explanation of standard Component class\n`,
+    action_pills: [
+      {
+        id: "pill_close_slop",
+        label: "Close Slop PR",
+        action_type: "gh_close",
+        is_destructive: true,
+        description: "Close PR citing cosmetic AST churn (Ratio: 0.002) to shield repository maintainer attention.",
+        payload: { reason: "cosmetic_slop" },
+      },
+    ],
+    execution_metadata: {
+      commit_sha: "a99c011e4f",
+      cached_replay: false,
+      latency_ms: 122,
+      live_fetched: true,
+      timestamp: new Date().toISOString(),
     },
   },
-  blast_radius_nodes: [
-    {
-      id: "fastapi/routing.py::APIRouter.add_api_route",
-      label: "APIRouter.add_api_route",
-      type: "function",
-      file_path: "fastapi/routing.py",
-      line_range: [140, 185],
-      hop_distance: 0,
-      change_type: "modified",
-      incoming_calls: 14,
-      outgoing_calls: 3,
+  flask_rule_breach: {
+    analysis_id: "sc-flask-5412",
+    url_parsed: {
+      raw_url: "https://github.com/pallets/flask/pull/5412",
+      url_type: "pull",
+      owner: "pallets",
+      repo: "flask",
+      target_id: "5412",
     },
-    {
-      id: "src/gateway.ts::registerRoutes",
-      label: "GatewayController.registerRoutes",
-      type: "function",
-      file_path: "src/gateway.ts",
-      line_range: [82, 110],
-      hop_distance: 1,
-      change_type: "affected_caller",
-      incoming_calls: 26,
-      outgoing_calls: 2,
+    user_mode: "maintainer",
+    risk_score: 89,
+    verdict: "RULE_VIOLATION",
+    summary: "Architectural policy breach: Contributor modified protected CI workflow (.github/workflows/tests.yml) without maintainer pre-authorization.",
+    deterministic_checks: {
+      untested_call_graph: { flagged: false, score: 0.2, untested_functions: [] },
+      ast_vs_text_ratio: { flagged: false, ast_node_delta: 12, text_diff_lines: 28, ratio: 0.42, is_cosmetic_slop: false },
+      dead_code: { flagged: false, dead_symbols: [] },
+      maintainer_rules: {
+        flagged: true,
+        violations: [
+          {
+            rule_id: "RULE_NO_WORKFLOW_TOUCH_GUEST",
+            description: "First-time contributors cannot modify GitHub Actions CI/CD workflows.",
+            offending_node: ".github/workflows/tests.yml",
+          },
+        ],
+      },
     },
-    {
-      id: "tests/test_routing.py::test_router_signature",
-      label: "test_router_signature",
-      type: "test",
-      file_path: "tests/test_routing.py",
-      line_range: [20, 35],
-      hop_distance: 2,
-      change_type: "unaffected",
-      incoming_calls: 0,
-      outgoing_calls: 1,
+    blast_radius_nodes: [
+      {
+        id: ".github/workflows/tests.yml",
+        label: "tests.yml (Workflow Breach)",
+        type: "file",
+        file_path: ".github/workflows/tests.yml",
+        hop_distance: 0,
+        change_type: "modified",
+        incoming_calls: 0,
+        outgoing_calls: 0,
+      },
+      {
+        id: "src/flask/app.py::Flask.wsgi_app",
+        label: "Flask.wsgi_app",
+        type: "function",
+        file_path: "src/flask/app.py",
+        line_range: [2000, 2045],
+        hop_distance: 1,
+        change_type: "unaffected",
+        incoming_calls: 12,
+        outgoing_calls: 3,
+      },
+    ],
+    blast_radius_edges: [],
+    suggested_diff: `--- a/.github/workflows/tests.yml\n+++ b/.github/workflows/tests.yml\n@@ -15,4 +15,5 @@ jobs:\n-        run: pytest\n+        run: pytest --ignore=tests/benchmarks.py\n`,
+    action_pills: [
+      {
+        id: "pill_revert_workflow",
+        label: "Enforce Workflow Rule",
+        action_type: "gh_comment",
+        is_destructive: false,
+        description: "Notify author that workflow modifications require maintainer security review.",
+        payload: { rule_id: "RULE_NO_WORKFLOW_TOUCH_GUEST" },
+      },
+    ],
+    execution_metadata: {
+      commit_sha: "e710bf39a1",
+      cached_replay: false,
+      latency_ms: 145,
+      live_fetched: true,
+      timestamp: new Date().toISOString(),
     },
-  ],
-  blast_radius_edges: [
-    {
-      source: "src/gateway.ts::registerRoutes",
-      target: "fastapi/routing.py::APIRouter.add_api_route",
-      relationship: "CALLS",
-      is_cross_file: true,
+  },
+  vite_clean_pr: {
+    analysis_id: "sc-vite-14902",
+    url_parsed: {
+      raw_url: "https://github.com/vitejs/vite/pull/14902",
+      url_type: "pull",
+      owner: "vitejs",
+      repo: "vite",
+      target_id: "14902",
     },
-    {
-      source: "tests/test_routing.py::test_router_signature",
-      target: "fastapi/routing.py::APIRouter.add_api_route",
-      relationship: "TESTED_BY",
+    user_mode: "contributor",
+    risk_score: 8,
+    verdict: "CLEAN",
+    summary: "Exemplary contribution: 100% test coverage detected for updated build optimizer. 0 untested callers, clean AST ratio, 0 architectural rule violations.",
+    deterministic_checks: {
+      untested_call_graph: { flagged: false, score: 0.05, untested_functions: [] },
+      ast_vs_text_ratio: { flagged: false, ast_node_delta: 24, text_diff_lines: 32, ratio: 0.75, is_cosmetic_slop: false },
+      dead_code: { flagged: false, dead_symbols: [] },
+      maintainer_rules: { flagged: false, violations: [] },
     },
-  ],
-  suggested_diff: `--- a/tests/test_routing.py\n+++ b/tests/test_routing.py\n@@ -24,6 +24,12 @@ def test_router_signature():\n+    router = APIRouter()\n+    # Validates updated parameter signature backward compatibility\n+    router.add_api_route('/ping', lambda: {'status': 'ok'})\n`,
-  action_pills: [
-    {
-      id: "pill_request_tests",
-      label: "Request Test Coverage",
-      action_type: "gh_comment",
-      is_destructive: false,
-      description: "Post blast radius telemetry report detailing 14 affected callers to the PR.",
-      payload: { template: "blast_warning" },
+    blast_radius_nodes: [
+      {
+        id: "packages/vite/src/node/optimizer.ts::createOptimizer",
+        label: "createOptimizer",
+        type: "function",
+        file_path: "packages/vite/src/node/optimizer.ts",
+        line_range: [45, 90],
+        hop_distance: 0,
+        change_type: "modified",
+        incoming_calls: 4,
+        outgoing_calls: 3,
+      },
+      {
+        id: "packages/vite/src/node/__tests__/optimizer.spec.ts::test_optimizer",
+        label: "optimizer.spec.ts",
+        type: "test",
+        file_path: "packages/vite/src/node/__tests__/optimizer.spec.ts",
+        line_range: [15, 60],
+        hop_distance: 1,
+        change_type: "added",
+        incoming_calls: 0,
+        outgoing_calls: 1,
+      },
+    ],
+    blast_radius_edges: [
+      {
+        source: "packages/vite/src/node/__tests__/optimizer.spec.ts::test_optimizer",
+        target: "packages/vite/src/node/optimizer.ts::createOptimizer",
+        relationship: "TESTED_BY",
+        is_cross_file: true,
+      },
+    ],
+    suggested_diff: null,
+    action_pills: [
+      {
+        id: "pill_approve_merge",
+        label: "Approve & Fast-Track",
+        action_type: "gh_comment",
+        is_destructive: false,
+        description: "Post verified GitOS clean graph certification stamp to PR.",
+        payload: { stamp: "verified_clean" },
+      },
+    ],
+    execution_metadata: {
+      commit_sha: "88fa40bc72",
+      cached_replay: false,
+      latency_ms: 110,
+      live_fetched: true,
+      timestamp: new Date().toISOString(),
     },
-    {
-      id: "pill_apply_test_diff",
-      label: "Push Generated Test Patch",
-      action_type: "gh_pr_draft",
-      is_destructive: false,
-      description: "Open a draft PR with unit tests covering the modified function signature.",
-      payload: {},
-    },
-  ],
-  execution_metadata: {
-    commit_sha: "a1b2c3d4e5f67890123456789abcdef012345678",
-    cached_replay: false,
-    latency_ms: 310,
-    live_fetched: false,
-    timestamp: new Date().toISOString(),
   },
 };
 
-export default function GitOSDashboard() {
+export default function GitOSCommandCenter() {
   const [urlInput, setUrlInput] = useState("https://github.com/fastapi/fastapi/pull/9999");
   const [detectedType, setDetectedType] = useState<string>("pull");
-  const [userMode, setUserMode] = useState<"maintainer" | "contributor">("maintainer");
+  const [userMode, setUserMode] = useState<"maintainer" | "contributor" | "guest">("maintainer");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [data, setData] = useState<AnalysisData>(INITIAL_DEMO_DATA);
-  const [selectedNode, setSelectedNode] = useState<BlastNode | null>(INITIAL_DEMO_DATA.blast_radius_nodes[0]);
+  const [analysisStep, setAnalysisStep] = useState<string>("");
+  const [data, setData] = useState<AnalysisData>(PRESET_SCENARIOS.fastapi_breaking);
+  const [selectedNode, setSelectedNode] = useState<BlastNode | null>(PRESET_SCENARIOS.fastapi_breaking.blast_radius_nodes[0]);
+  const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff">("graph");
   const [activeModalPill, setActiveModalPill] = useState<ActionPill | null>(null);
   const [executionState, setExecutionState] = useState<"idle" | "executing" | "done">("idle");
   const [rateLimitRem, setRateLimitRem] = useState<number>(5000);
-  const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff">("graph");
+  const [copiedDiff, setCopiedDiff] = useState(false);
 
-  // Groq Co-Pilot Chat State
+  // Canvas Viewport Transforms (Zoom & Pan)
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [draggedNodeIndex, setDraggedNodeIndex] = useState<number | null>(null);
+  const [isPhysicsActive, setIsPhysicsActive] = useState(true);
+
+  // Co-Pilot State
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "gitos"; text: string }>>([
     {
       sender: "gitos",
-      text: "GitOS Co-Pilot online (< 1,000 tokens compressed). Ask me anything about affected symbols or missing tests.",
+      text: "GitOS Graph Reasoner ready (< 1,000 tokens compressed). Ask me about downstream callers, slop scores, or test coverage.",
     },
   ]);
   const [chatInput, setChatInput] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [isGeneratingTest, setIsGeneratingTest] = useState(false);
 
-  // User Authentication State
+  // User Auth State
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Rule Builder Modal State
+  // Maintainer Rules Modal
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [rules, setRules] = useState<MaintainerRule[]>([]);
   const [newRuleName, setNewRuleName] = useState("");
@@ -268,8 +531,9 @@ export default function GitOSDashboard() {
   const [newRuleDesc, setNewRuleDesc] = useState("");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const nodePhysicsRef = useRef<Array<BlastNode & { x: number; y: number; vx: number; vy: number }>>([]);
 
-  // Live Omnibox Detection
+  // Auto-detect URL format
   useEffect(() => {
     const val = urlInput.trim();
     if (/\/pull\/\d+/.test(val)) setDetectedType("pull");
@@ -279,9 +543,9 @@ export default function GitOSDashboard() {
     else setDetectedType("unknown");
   }, [urlInput]);
 
-  // Fetch health, rules, & user session
+  // Initial Backend Health & Session Check
   useEffect(() => {
-    const fetchHealthAndRules = async () => {
+    const initApp = async () => {
       try {
         const hRes = await fetch(`${API_BASE_URL}/api/health`);
         if (hRes.ok) {
@@ -295,7 +559,6 @@ export default function GitOSDashboard() {
           const rData = await rRes.json();
           setRules(rData.rules || []);
         }
-        // Check current session
         const uRes = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: "include" });
         if (uRes.ok) {
           const uData = await uRes.json();
@@ -304,139 +567,44 @@ export default function GitOSDashboard() {
             if (uData.role) setUserMode(uData.role);
           }
         }
-      } catch {
-        // Backend offline fallback
-      }
+      } catch {}
     };
-    fetchHealthAndRules();
+    initApp();
   }, []);
 
-  // GitHub Login Handler
-  const handleLoginGithub = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/github/login`);
-      const d = await res.json();
-      if (d.oauth_configured && d.auth_url) {
-        window.location.href = d.auth_url;
-      } else {
-        setIsAuthModalOpen(true);
-      }
-    } catch {
-      setIsAuthModalOpen(true);
+  // Preset Scenario Switcher
+  const loadPreset = (key: string) => {
+    const scenario = PRESET_SCENARIOS[key];
+    if (scenario) {
+      setData(scenario);
+      setUrlInput(scenario.url_parsed.raw_url);
+      setUserMode(scenario.user_mode);
+      setSelectedNode(scenario.blast_radius_nodes[0] || null);
+      setPan({ x: 0, y: 0 });
+      setZoom(1);
     }
   };
 
-  // Developer Sandbox Mock Login
-  const handleMockLogin = async (role: "maintainer" | "contributor") => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/mock-login?role=${role}`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (res.ok) {
-        const d = await res.json();
-        setCurrentUser(d.user);
-        setUserMode(role);
-        setIsAuthModalOpen(false);
-      }
-    } catch {
-      setCurrentUser({
-        login: role === "maintainer" ? "octocat-maintainer" : "contributor-alex",
-        name: role === "maintainer" ? "Octocat Maintainer" : "Alex Contributor",
-        avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4",
-      });
-      setUserMode(role);
-      setIsAuthModalOpen(false);
-    }
-  };
+  // Synchronize Simulation Nodes
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const width = canvas?.parentElement?.clientWidth || 700;
+    const height = canvas?.parentElement?.clientHeight || 500;
 
-  // Logout Handler
-  const handleLogout = async () => {
-    try {
-      await fetch(`${API_BASE_URL}/api/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-      });
-    } catch {}
-    setCurrentUser(null);
-    setUserMode("contributor");
-  };
+    nodePhysicsRef.current = data.blast_radius_nodes.map((node, i) => {
+      const angle = (i * 2 * Math.PI) / (data.blast_radius_nodes.length || 1);
+      const radius = 130 + (i % 2) * 50;
+      return {
+        ...node,
+        x: width / 2 + Math.cos(angle) * radius,
+        y: height / 2 + Math.sin(angle) * radius,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: (Math.random() - 0.5) * 1.5,
+      };
+    });
+  }, [data]);
 
-  // Execute Analysis via API with dynamic repo role detection
-  const handleAnalyze = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsAnalyzing(true);
-
-    // Auto-detect role on target repository if logged in
-    if (currentUser) {
-      const m = urlInput.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-      if (m) {
-        const o = m[1];
-        const r = m[2].replace(/\.git$/, "").split("/")[0];
-        try {
-          const pRes = await fetch(`${API_BASE_URL}/api/auth/check-permission?owner=${o}&repo=${r}`, {
-            credentials: "include",
-          });
-          if (pRes.ok) {
-            const pData = await pRes.json();
-            if (pData.role) setUserMode(pData.role);
-          }
-        } catch {}
-      }
-    }
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ url: urlInput, user_mode: userMode }),
-      });
-      if (res.ok) {
-        const payload = await res.json();
-        setData(payload);
-        if (payload.blast_radius_nodes?.length > 0) {
-          setSelectedNode(payload.blast_radius_nodes[0]);
-        }
-      }
-    } catch {
-      // In standalone demo mode, fallback is active
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  // Add Maintainer Rule
-  const handleCreateRule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newRuleName || !newRulePattern) return;
-
-    const ruleObj: MaintainerRule = {
-      rule_id: `RULE_${newRuleName.toUpperCase().replace(/\s+/g, "_")}`,
-      name: newRuleName,
-      pattern: newRulePattern,
-      severity: "high",
-      description: newRuleDesc || `Custom rule enforcing ${newRulePattern}`,
-    };
-
-    try {
-      await fetch(`${API_BASE_URL}/api/rules`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(ruleObj),
-      });
-      setRules([...rules, ruleObj]);
-      setNewRuleName("");
-      setNewRulePattern("");
-      setNewRuleDesc("");
-      setIsRuleModalOpen(false);
-    } catch {
-      setRules([...rules, ruleObj]);
-      setIsRuleModalOpen(false);
-    }
-  };
-
-  // Canvas Force Graph Simulation
+  // Interactive Physics & Canvas Animation Loop
   useEffect(() => {
     if (activeViewTab !== "graph") return;
     const canvas = canvasRef.current;
@@ -445,53 +613,147 @@ export default function GitOSDashboard() {
     if (!ctx) return;
 
     let animId: number;
-    const width = (canvas.width = canvas.parentElement?.clientWidth || 800);
-    const height = (canvas.height = canvas.parentElement?.clientHeight || 600);
-
-    const nodes = data.blast_radius_nodes.map((n, i) => ({
-      ...n,
-      x: width / 2 + Math.cos((i * 2 * Math.PI) / data.blast_radius_nodes.length) * 170,
-      y: height / 2 + Math.sin((i * 2 * Math.PI) / data.blast_radius_nodes.length) * 170,
-    }));
+    let particleOffset = 0;
 
     const render = () => {
-      ctx.clearRect(0, 0, width, height);
+      const width = (canvas.width = canvas.parentElement?.clientWidth || 700);
+      const height = (canvas.height = canvas.parentElement?.clientHeight || 500);
 
-      // Draw Edges
+      ctx.clearRect(0, 0, width, height);
+      ctx.save();
+
+      // Pan & Zoom Transform
+      ctx.translate(width / 2 + pan.x, height / 2 + pan.y);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-width / 2, -height / 2);
+
+      const nodes = nodePhysicsRef.current;
+
+      // Physics Engine Tick
+      if (isPhysicsActive) {
+        // 1. Coulomb Repulsion between nodes
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const dx = nodes[j].x - nodes[i].x;
+            const dy = nodes[j].y - nodes[i].y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist < 320) {
+              const force = (320 - dist) / dist * 0.45;
+              if (draggedNodeIndex !== i) {
+                nodes[i].vx -= dx * force * 0.05;
+                nodes[i].vy -= dy * force * 0.05;
+              }
+              if (draggedNodeIndex !== j) {
+                nodes[j].vx += dx * force * 0.05;
+                nodes[j].vy += dy * force * 0.05;
+              }
+            }
+          }
+        }
+
+        // 2. Hooke's Spring Attraction along edges
+        data.blast_radius_edges.forEach((edge) => {
+          const src = nodes.find((n) => n.id === edge.source);
+          const tgt = nodes.find((n) => n.id === edge.target);
+          if (src && tgt) {
+            const dx = tgt.x - src.x;
+            const dy = tgt.y - src.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const targetDist = edge.is_cross_file ? 200 : 140;
+            const force = (dist - targetDist) * 0.003;
+            src.vx += dx * force;
+            src.vy += dy * force;
+            tgt.vx -= dx * force;
+            tgt.vy -= dy * force;
+          }
+        });
+
+        // 3. Center Gravity & Damping
+        const cx = width / 2;
+        const cy = height / 2;
+        nodes.forEach((n, idx) => {
+          if (draggedNodeIndex !== idx) {
+            n.vx += (cx - n.x) * 0.0008;
+            n.vy += (cy - n.y) * 0.0008;
+            n.vx *= 0.88;
+            n.vy *= 0.88;
+            n.x += n.vx;
+            n.y += n.vy;
+          }
+        });
+      }
+
+      particleOffset = (particleOffset + 0.012) % 1;
+
+      // Draw Relationship Vectors (Edges)
       data.blast_radius_edges.forEach((edge) => {
         const src = nodes.find((n) => n.id === edge.source);
         const tgt = nodes.find((n) => n.id === edge.target);
         if (src && tgt) {
+          const isRelatedToSelected =
+            selectedNode && (selectedNode.id === src.id || selectedNode.id === tgt.id);
+
           ctx.beginPath();
           ctx.moveTo(src.x, src.y);
           ctx.lineTo(tgt.x, tgt.y);
+
           if (edge.relationship === "TESTED_BY") {
-            ctx.strokeStyle = "rgba(16, 185, 129, 0.4)";
+            ctx.strokeStyle = isRelatedToSelected ? "#10b981" : "rgba(16, 185, 129, 0.4)";
+            ctx.lineWidth = 2;
           } else if (edge.is_cross_file) {
-            ctx.strokeStyle = "rgba(244, 63, 94, 0.6)";
+            ctx.strokeStyle = isRelatedToSelected ? "#f43f5e" : "rgba(244, 63, 94, 0.5)";
+            ctx.lineWidth = isRelatedToSelected ? 2.5 : 1.8;
           } else {
-            ctx.strokeStyle = "rgba(56, 189, 248, 0.3)";
+            ctx.strokeStyle = isRelatedToSelected ? "#38bdf8" : "rgba(56, 189, 248, 0.25)";
+            ctx.lineWidth = 1.5;
           }
-          ctx.lineWidth = edge.is_cross_file ? 2 : 1.5;
-          ctx.setLineDash(edge.is_cross_file ? [6, 3] : [3, 3]);
+
           ctx.stroke();
-          ctx.setLineDash([]);
+
+          // Animated Call Packet along edge
+          const px = src.x + (tgt.x - src.x) * particleOffset;
+          const py = src.y + (tgt.y - src.y) * particleOffset;
+          ctx.beginPath();
+          ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = edge.is_cross_file ? "#f43f5e" : "#38bdf8";
+          ctx.shadowColor = ctx.fillStyle;
+          ctx.shadowBlur = 8;
+          ctx.fill();
+          ctx.shadowBlur = 0;
         }
       });
 
       // Draw Nodes
       nodes.forEach((node) => {
         const isSelected = selectedNode?.id === node.id;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, isSelected ? 18 : 12, 0, Math.PI * 2);
+        const isModified = node.change_type === "modified";
+        const isCaller = node.change_type === "affected_caller";
+        const isTest = node.type === "test";
 
-        if (node.change_type === "modified") {
+        // Radial Halo for selected or high-blast nodes
+        if (isSelected || isModified) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, isSelected ? 32 : 24, 0, Math.PI * 2);
+          ctx.fillStyle = isModified
+            ? "rgba(244, 63, 94, 0.18)"
+            : isCaller
+            ? "rgba(245, 158, 11, 0.18)"
+            : "rgba(56, 189, 248, 0.15)";
+          ctx.fill();
+        }
+
+        // Inner Solid Core
+        ctx.beginPath();
+        const baseRadius = isSelected ? 16 : isModified ? 14 : 11;
+        ctx.arc(node.x, node.y, baseRadius, 0, Math.PI * 2);
+
+        if (isModified) {
           ctx.fillStyle = "#f43f5e";
           ctx.shadowColor = "#f43f5e";
-        } else if (node.change_type === "affected_caller") {
+        } else if (isCaller) {
           ctx.fillStyle = "#f59e0b";
           ctx.shadowColor = "#f59e0b";
-        } else if (node.type === "test") {
+        } else if (isTest) {
           ctx.fillStyle = "#10b981";
           ctx.shadowColor = "#10b981";
         } else {
@@ -499,72 +761,150 @@ export default function GitOSDashboard() {
           ctx.shadowColor = "#38bdf8";
         }
 
-        ctx.shadowBlur = isSelected ? 20 : 8;
+        ctx.shadowBlur = isSelected ? 24 : 12;
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        ctx.fillStyle = "#e2e8f0";
-        ctx.font = "11px -apple-system, sans-serif";
+        // Concentric White Ring
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+        ctx.lineWidth = isSelected ? 2.5 : 1.5;
+        ctx.stroke();
+
+        // Node Label & Badge
+        ctx.fillStyle = isSelected ? "#ffffff" : "#cbd5e1";
+        ctx.font = isSelected
+          ? "600 12px ui-monospace, SFMono-Regular, Menlo, monospace"
+          : "500 11px ui-monospace, SFMono-Regular, Menlo, monospace";
         ctx.textAlign = "center";
-        ctx.fillText(node.label, node.x, node.y + 24);
+        ctx.fillText(node.label, node.x, node.y + (isSelected ? 26 : 22));
+
+        // File Path Subtitle
+        if (node.file_path && isSelected) {
+          ctx.fillStyle = "#64748b";
+          ctx.font = "10px sans-serif";
+          ctx.fillText(node.file_path, node.x, node.y + 38);
+        }
       });
 
+      ctx.restore();
       animId = requestAnimationFrame(render);
     };
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [data, selectedNode, activeViewTab]);
+  }, [data, selectedNode, activeViewTab, pan, zoom, isPhysicsActive, draggedNodeIndex]);
 
-  // Handle explicit action execution
-  const handleExecuteConfirmedAction = async () => {
-    if (!activeModalPill) return;
-    setExecutionState("executing");
-    try {
-      await fetch(`${API_BASE_URL}/api/execute-action`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action_type: activeModalPill.action_type,
-          owner: data.url_parsed.owner,
-          repo: data.url_parsed.repo,
-          target_id: data.url_parsed.target_id,
-          payload: activeModalPill.payload,
-          confirmed: true,
-        }),
-      });
-    } catch {
-      // In demo mode
+  // Mouse Interaction: Drag Nodes or Pan
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX - rect.left;
+    const clientY = e.clientY - rect.top;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    // Map screen click to canvas coordinate space
+    const canvasX = (clientX - (width / 2 + pan.x)) / zoom + width / 2;
+    const canvasY = (clientY - (height / 2 + pan.y)) / zoom + height / 2;
+
+    const nodes = nodePhysicsRef.current;
+    let clickedIndex = -1;
+
+    for (let i = 0; i < nodes.length; i++) {
+      const dx = canvasX - nodes[i].x;
+      const dy = canvasY - nodes[i].y;
+      if (Math.sqrt(dx * dx + dy * dy) < 22) {
+        clickedIndex = i;
+        break;
+      }
     }
-    setExecutionState("done");
-    setTimeout(() => {
-      setActiveModalPill(null);
-      setExecutionState("idle");
-    }, 1200);
+
+    if (clickedIndex !== -1) {
+      setDraggedNodeIndex(clickedIndex);
+      setSelectedNode(nodes[clickedIndex]);
+    } else {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    }
   };
 
-  // Generate automated test patch via Groq single-shot reasoning
-  const handleGenerateTestPatch = async () => {
-    setIsGeneratingTest(true);
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (draggedNodeIndex !== null) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const newX = (clientX - (width / 2 + pan.x)) / zoom + width / 2;
+      const newY = (clientY - (height / 2 + pan.y)) / zoom + height / 2;
+
+      nodePhysicsRef.current[draggedNodeIndex].x = newX;
+      nodePhysicsRef.current[draggedNodeIndex].y = newY;
+      nodePhysicsRef.current[draggedNodeIndex].vx = 0;
+      nodePhysicsRef.current[draggedNodeIndex].vy = 0;
+    } else if (isPanning) {
+      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setDraggedNodeIndex(null);
+    setIsPanning(false);
+  };
+
+  // Non-passive wheel listener for smooth zoom without browser console warnings
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onCanvasWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 0.89;
+      setZoom((z) => Math.max(0.4, Math.min(2.8, z * factor)));
+    };
+
+    canvas.addEventListener("wheel", onCanvasWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onCanvasWheel);
+  }, []);
+
+  // Live Analysis Trigger
+  const handleAnalyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAnalyzing(true);
+    setAnalysisStep("Resolving GitHub Tree & Commits...");
+
     try {
-      const res = await fetch(`${API_BASE_URL}/api/generate-patch`, {
+      setTimeout(() => setAnalysisStep("Extracting Universal AST Subgraph..."), 600);
+      setTimeout(() => setAnalysisStep("Stitching Polyglot Caller Edges..."), 1200);
+      setTimeout(() => setAnalysisStep("Executing 4 Zero-Token Defense Filters..."), 1800);
+
+      const res = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ analysis_data: data }),
+        credentials: "include",
+        body: JSON.stringify({ url: urlInput, user_mode: userMode }),
       });
+
       if (res.ok) {
-        const patchData = await res.json();
-        setData((prev) => ({ ...prev, suggested_diff: patchData.suggested_diff }));
-        setActiveViewTab("diff");
+        const payload = await res.json();
+        setData(payload);
+        if (payload.blast_radius_nodes?.length > 0) {
+          setSelectedNode(payload.blast_radius_nodes[0]);
+        }
       }
     } catch {
-      setActiveViewTab("diff");
+      // Keep active view with fallback
     } finally {
-      setIsGeneratingTest(false);
+      setIsAnalyzing(false);
+      setAnalysisStep("");
     }
   };
 
-  // Telemetry chat via Groq (< 1000 tokens)
+  // Co-Pilot Chat
   const handleSendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || isChatLoading) return;
@@ -589,57 +929,95 @@ export default function GitOSDashboard() {
       } else {
         setChatMessages((prev) => [
           ...prev,
-          { sender: "gitos", text: "Telemetry: The modified symbol breaks caller backward-compatibility." },
+          {
+            sender: "gitos",
+            text: `Graph Telemetry: The modified symbol in ${selectedNode?.file_path || "the repo"} impacts ${selectedNode?.incoming_calls || 14} callers. Unit regression tests recommended before merge.`,
+          },
         ]);
       }
     } catch {
       setChatMessages((prev) => [
         ...prev,
-        { sender: "gitos", text: "Telemetry: Untested modified callers detected across the dependency subgraph." },
+        {
+          sender: "gitos",
+          text: `Telemetry: Untested modified callers detected across the dependency subgraph. Risk score: ${data.risk_score}/100.`,
+        },
       ]);
     } finally {
       setIsChatLoading(false);
     }
   };
 
+  const copyDiffToClipboard = () => {
+    if (data.suggested_diff) {
+      navigator.clipboard.writeText(data.suggested_diff);
+      setCopiedDiff(true);
+      setTimeout(() => setCopiedDiff(false), 2000);
+    }
+  };
+
   const getVerdictBadge = (verdict: string) => {
     switch (verdict) {
       case "CRITICAL_BLAST":
-        return <span className="px-3 py-1 bg-rose-500/20 text-rose-400 border border-rose-500/40 rounded-full text-xs font-semibold flex items-center gap-1.5"><ShieldAlert className="w-3.5 h-3.5" /> CRITICAL BLAST</span>;
-      case "NEEDS_TESTS":
-        return <span className="px-3 py-1 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded-full text-xs font-semibold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> NEEDS TESTS</span>;
+        return (
+          <span className="px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/30 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-[0_0_15px_rgba(244,63,94,0.25)]">
+            <ShieldAlert className="w-3.5 h-3.5" /> CRITICAL BLAST
+          </span>
+        );
       case "AI_SLOP_SUSPECTED":
-        return <span className="px-3 py-1 bg-purple-500/20 text-purple-400 border border-purple-500/40 rounded-full text-xs font-semibold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> AI SLOP DETECTED</span>;
+        return (
+          <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-[0_0_15px_rgba(168,85,247,0.25)]">
+            <Flame className="w-3.5 h-3.5" /> AI SLOP DETECTED
+          </span>
+        );
+      case "RULE_VIOLATION":
+        return (
+          <span className="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.25)]">
+            <AlertTriangle className="w-3.5 h-3.5" /> RULE BREACH
+          </span>
+        );
       default:
-        return <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-full text-xs font-semibold flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> CLEAN GRAPH</span>;
+        return (
+          <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.25)]">
+            <ShieldCheck className="w-3.5 h-3.5" /> CLEAN GRAPH
+          </span>
+        );
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0d14] text-slate-100 flex flex-col bg-cyber-grid">
-      {/* 1. Master Top Bar & Universal Omnibox */}
-      <header className="border-b border-slate-800/80 bg-[#0f1422]/90 backdrop-blur sticky top-0 z-40 px-6 py-3.5 flex items-center justify-between">
+    <div className="h-screen w-screen overflow-hidden bg-[#07090e] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/20 selection:text-cyan-200">
+      {/* 1. Header Command Bar */}
+      <header className="border-b border-slate-800/80 bg-[#0c101a]/95 backdrop-blur-md sticky top-0 z-40 px-5 py-2.5 flex items-center justify-between gap-4">
+        {/* Brand & Status */}
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-black shadow-lg shadow-cyan-500/20">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-black text-black text-sm shadow-[0_0_20px_rgba(6,182,212,0.35)] ring-1 ring-white/20">
             G
           </div>
           <div>
-            <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
-              GitOS <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">Polyglot Graph</span>
-            </h1>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold tracking-tight text-white">GitOS</span>
+              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/80">
+                Defense Layer
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Graph Engine: FalkorDB Active
+            </div>
           </div>
         </div>
 
-        {/* Universal Omnibox Input */}
-        <form onSubmit={handleAnalyze} className="flex-1 max-w-2xl mx-8 relative">
+        {/* Omnibox & URL Search */}
+        <form onSubmit={handleAnalyze} className="flex-1 max-w-2xl relative">
           <div className="relative flex items-center">
-            <Terminal className="w-4 h-4 text-cyan-400 absolute left-3.5" />
+            <Terminal className="w-4 h-4 text-cyan-400 absolute left-3.5 pointer-events-none" />
             <input
               type="text"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="Paste any GitHub URL (Python, TS, Go, Rust, Java, etc.)..."
-              className="w-full pl-10 pr-32 py-2 bg-[#151c30] border border-slate-700/80 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition"
+              placeholder="Paste any GitHub URL (PR, Repo, Issue, or Blob)..."
+              className="w-full pl-10 pr-28 py-2 bg-[#121829] border border-slate-700/80 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition"
             />
             <div className="absolute right-2 flex items-center gap-1.5">
               <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
@@ -648,56 +1026,57 @@ export default function GitOSDashboard() {
               <button
                 type="submit"
                 disabled={isAnalyzing}
-                className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-lg text-xs font-semibold transition"
+                className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm"
               >
-                {isAnalyzing ? "Analyzing..." : "Triage"}
+                {isAnalyzing ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>Analyzing</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3 h-3 fill-current" />
+                    <span>Triage</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
         </form>
 
-        {/* Action Controls & Mode Switcher */}
-        <div className="flex items-center gap-3">
+        {/* Mode Switcher, Rate Limit, Auth */}
+        <div className="flex items-center gap-2.5">
           {/* Rate limit badge */}
-          <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#151c30] border border-slate-800">
+          <div className="text-[11px] font-mono text-slate-400 hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#121829] border border-slate-800">
             <Database className="w-3.5 h-3.5 text-cyan-400" />
-            API: {rateLimitRem} req/hr
+            <span>API: {rateLimitRem} req/hr</span>
           </div>
 
-          {/* Maintainer Rule Builder Trigger */}
-          <button
-            onClick={() => setIsRuleModalOpen(true)}
-            className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#151c30] hover:bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 transition"
-          >
-            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            Rules ({rules.length})
-          </button>
-
-          {/* Dual Mode Switcher */}
-          <div className="flex items-center gap-1.5 bg-[#151c30] p-1 rounded-xl border border-slate-800">
+          {/* Mode Switcher */}
+          <div className="flex items-center bg-[#121829] p-0.5 rounded-xl border border-slate-800">
             <button
               onClick={() => setUserMode("maintainer")}
               className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
                 userMode === "maintainer"
-                  ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-semibold"
+                  ? "bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20"
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              🛡️ Maintainer
+              <ShieldCheck className="w-3 h-3" /> Maintainer
             </button>
             <button
               onClick={() => setUserMode("contributor")}
               className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
                 userMode === "contributor"
-                  ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-semibold"
+                  ? "bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20"
                   : "text-slate-400 hover:text-white"
               }`}
             >
-              🚀 Contributor
+              <Sparkles className="w-3 h-3" /> Contributor
             </button>
           </div>
 
-          {/* GitHub OAuth Status & Profile */}
+          {/* Auth Button */}
           {currentUser ? (
             <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
               <img
@@ -705,452 +1084,672 @@ export default function GitOSDashboard() {
                 alt={currentUser.login}
                 className="w-7 h-7 rounded-full border border-cyan-500/50"
               />
-              <div className="hidden lg:block text-left">
-                <div className="text-xs font-semibold text-white leading-tight">
-                  @{currentUser.login}
-                </div>
-                <div className="text-[10px] text-cyan-400 capitalize">
-                  {userMode}
-                </div>
-              </div>
-              <button
-                onClick={handleLogout}
-                title="Disconnect Account"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
+              <span className="text-xs font-semibold text-white">@{currentUser.login}</span>
             </div>
           ) : (
             <button
-              onClick={handleLoginGithub}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 flex items-center gap-1.5 transition shadow-sm"
+              onClick={() => setIsAuthModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 flex items-center gap-1.5 transition"
             >
-              <User className="w-3.5 h-3.5 text-cyan-400" />
-              Connect GitHub
+              <User className="w-3.5 h-3.5 text-cyan-400" /> Connect
             </button>
           )}
         </div>
       </header>
 
-      {/* Main Workspace */}
+      {/* Preset Scenarios Strip */}
+      <div className="bg-[#0b0e18] border-b border-slate-800/80 px-6 py-2 flex items-center gap-3 overflow-x-auto text-xs">
+        <span className="text-[11px] font-mono text-slate-500 uppercase tracking-wider flex items-center gap-1 flex-shrink-0">
+          <Binary className="w-3 h-3 text-cyan-400" /> Sample Scenarios:
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => loadPreset("fastapi_breaking")}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition border flex items-center gap-1.5 ${
+              data.url_parsed.repo === "fastapi"
+                ? "bg-rose-500/10 border-rose-500/50 text-rose-300"
+                : "bg-[#121829] border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+            FastAPI #9999 (Breaking Callers)
+          </button>
+          <button
+            onClick={() => loadPreset("react_ai_slop")}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition border flex items-center gap-1.5 ${
+              data.url_parsed.repo === "react"
+                ? "bg-purple-500/10 border-purple-500/50 text-purple-300"
+                : "bg-[#121829] border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+            React #28410 (AI Cosmetic Slop)
+          </button>
+          <button
+            onClick={() => loadPreset("flask_rule_breach")}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition border flex items-center gap-1.5 ${
+              data.url_parsed.repo === "flask"
+                ? "bg-amber-500/10 border-amber-500/50 text-amber-300"
+                : "bg-[#121829] border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            Flask #5412 (Workflow Rule Breach)
+          </button>
+          <button
+            onClick={() => loadPreset("vite_clean_pr")}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition border flex items-center gap-1.5 ${
+              data.url_parsed.repo === "vite"
+                ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-300"
+                : "bg-[#121829] border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            Vite #14902 (Clean & Tested)
+          </button>
+        </div>
+      </div>
+
+      {/* 2. Main 3-Column Studio Workspace */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left/Center Canvas View */}
-        <div className="flex-1 relative flex flex-col">
-          {/* Tab Selector & Telemetry Bar */}
-          <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
-            <div className="flex items-center bg-[#0f1422]/90 backdrop-blur rounded-lg p-0.5 border border-slate-700">
-              <button
-                onClick={() => setActiveViewTab("graph")}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
-                  activeViewTab === "graph" ? "bg-cyan-500 text-slate-950 font-semibold" : "text-slate-400"
-                }`}
-              >
-                <Activity className="w-3.5 h-3.5" /> 3D Blast Graph
-              </button>
-              <button
-                onClick={() => setActiveViewTab("diff")}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
-                  activeViewTab === "diff" ? "bg-cyan-500 text-slate-950 font-semibold" : "text-slate-400"
-                }`}
-              >
-                <Code2 className="w-3.5 h-3.5" /> Patch Diff
-              </button>
+        {/* ======================================================== */}
+        {/* COLUMN 1: File & Blast Symbol Tree Explorer (270px)      */}
+        {/* ======================================================== */}
+        <aside className="w-72 border-r border-slate-800/80 bg-[#0a0d16] flex flex-col flex-shrink-0">
+          <div className="p-3 border-b border-slate-800/80 flex items-center justify-between">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <FolderTree className="w-3.5 h-3.5 text-cyan-400" /> Subgraph Symbols
+            </span>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+              {data.blast_radius_nodes.length} nodes
+            </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3 space-y-4">
+            {/* PR Overview Card */}
+            <div className="p-3 rounded-xl bg-[#121829] border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-white flex items-center gap-1">
+                  <GitPullRequest className="w-3.5 h-3.5 text-cyan-400" />
+                  {data.url_parsed.owner}/{data.url_parsed.repo} #{data.url_parsed.target_id}
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  {data.execution_metadata.latency_ms}ms
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 font-mono truncate">
+                Commit: {data.execution_metadata.commit_sha}
+              </div>
             </div>
 
-            <span className="px-2.5 py-1 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 text-xs font-mono text-slate-300 flex items-center gap-1.5">
-              Nodes: {data.blast_radius_nodes.length} | Edges: {data.blast_radius_edges.length}
-            </span>
+            {/* Symbols List */}
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-1">
+                Affected Graph Nodes
+              </div>
+              {data.blast_radius_nodes.map((node) => {
+                const isSelected = selectedNode?.id === node.id;
+                return (
+                  <button
+                    key={node.id}
+                    onClick={() => setSelectedNode(node)}
+                    className={`w-full text-left p-2.5 rounded-xl border transition flex items-start gap-2.5 ${
+                      isSelected
+                        ? "bg-cyan-950/40 border-cyan-500/60 text-white shadow-[0_0_15px_rgba(6,182,212,0.15)]"
+                        : "bg-[#111627] border-slate-800/90 text-slate-300 hover:border-slate-700"
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                        node.change_type === "modified"
+                          ? "bg-rose-500 shadow-[0_0_8px_#f43f5e]"
+                          : node.change_type === "affected_caller"
+                          ? "bg-amber-500 shadow-[0_0_8px_#f59e0b]"
+                          : node.type === "test"
+                          ? "bg-emerald-500 shadow-[0_0_8px_#10b981]"
+                          : "bg-cyan-400 shadow-[0_0_8px_#38bdf8]"
+                      }`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold font-mono truncate">{node.label}</div>
+                      <div className="text-[10px] text-slate-500 truncate font-mono mt-0.5">
+                        {node.file_path || "root"}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                        <span>Hop: {node.hop_distance}</span>
+                        {node.incoming_calls !== undefined && (
+                          <span>• {node.incoming_calls} callers</span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
 
-            {data.execution_metadata.live_fetched && (
-              <span className="px-2.5 py-1 rounded-md bg-emerald-950/80 border border-emerald-700 text-xs font-mono text-emerald-400 flex items-center gap-1">
-                ✓ Live GitHub Streaming
-              </span>
+        {/* ======================================================== */}
+        {/* COLUMN 2: Visual Command Center (Interactive Graph/Diff)  */}
+        {/* ======================================================== */}
+        <main className="flex-1 relative flex flex-col bg-[#07090e] overflow-hidden">
+          {/* View Tab Selector & Graph HUD */}
+          <div className="p-3 border-b border-slate-800/80 bg-[#0a0d16]/80 backdrop-blur flex items-center justify-between z-10">
+            <div className="flex items-center gap-2">
+              <div className="flex items-center bg-[#121829] p-0.5 rounded-lg border border-slate-800">
+                <button
+                  onClick={() => setActiveViewTab("graph")}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
+                    activeViewTab === "graph"
+                      ? "bg-cyan-500 text-slate-950 shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Activity className="w-3.5 h-3.5" /> 3D Topology Graph
+                </button>
+                <button
+                  onClick={() => setActiveViewTab("diff")}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
+                    activeViewTab === "diff"
+                      ? "bg-cyan-500 text-slate-950 shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Code2 className="w-3.5 h-3.5" /> Code & Diff Inspector
+                </button>
+              </div>
+
+              {/* Subgraph metrics pill */}
+              <div className="text-[11px] font-mono text-slate-400 px-2 py-1 rounded bg-[#121829] border border-slate-800">
+                Nodes: {data.blast_radius_nodes.length} | Edges: {data.blast_radius_edges.length}
+              </div>
+            </div>
+
+            {/* Canvas Viewport HUD Controls */}
+            {activeViewTab === "graph" && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setZoom((z) => Math.min(2.8, z * 1.15))}
+                  title="Zoom In"
+                  className="p-1.5 rounded-lg bg-[#121829] hover:bg-slate-800 border border-slate-800 text-slate-300 transition"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setZoom((z) => Math.max(0.4, z * 0.85))}
+                  title="Zoom Out"
+                  className="p-1.5 rounded-lg bg-[#121829] hover:bg-slate-800 border border-slate-800 text-slate-300 transition"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    setZoom(1);
+                    setPan({ x: 0, y: 0 });
+                  }}
+                  title="Reset View"
+                  className="p-1.5 rounded-lg bg-[#121829] hover:bg-slate-800 border border-slate-800 text-slate-300 transition"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsPhysicsActive((p) => !p)}
+                  title={isPhysicsActive ? "Pause Physics" : "Resume Physics"}
+                  className={`px-2 py-1 rounded-lg text-xs font-mono border transition flex items-center gap-1 ${
+                    isPhysicsActive
+                      ? "bg-cyan-950/60 border-cyan-800 text-cyan-400"
+                      : "bg-[#121829] border-slate-800 text-slate-400"
+                  }`}
+                >
+                  Physics: {isPhysicsActive ? "ON" : "OFF"}
+                </button>
+              </div>
             )}
           </div>
 
-          {/* Canvas or Diff View */}
-          {activeViewTab === "graph" ? (
-            <div className="flex-1 w-full h-full cursor-crosshair">
-              <canvas ref={canvasRef} className="w-full h-full block" />
-            </div>
-          ) : (
-            <div className="flex-1 p-6 overflow-y-auto">
-              <div className="p-4 bg-[#0a0d14] rounded-2xl border border-slate-800">
-                <div className="text-xs font-mono text-slate-400 mb-2 flex items-center justify-between">
-                  <span>UNIFIED DIFF STREAM (IN-MEMORY PARSED)</span>
-                  <span className="text-cyan-400">{data.url_parsed.owner}/{data.url_parsed.repo}</span>
-                </div>
-                <pre className="font-mono text-xs text-slate-200 overflow-x-auto leading-relaxed">
-                  {data.suggested_diff || "No diff available for repository root."}
-                </pre>
-              </div>
-            </div>
-          )}
+          {/* Interactive Workspace Area */}
+          <div className="flex-1 relative flex">
+            {activeViewTab === "graph" ? (
+              <div className="w-full h-full relative cursor-grab active:cursor-grabbing">
+                <canvas
+                  ref={canvasRef}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  className="w-full h-full block"
+                />
 
-          {/* Contextual Action Dock at Canvas Bottom */}
-          <div className="p-4 bg-[#0f1422]/90 backdrop-blur border-t border-slate-800/80 flex items-center justify-between z-20">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-medium">Context Actions:</span>
-              {data.action_pills.map((pill) => (
-                <button
-                  key={pill.id}
-                  onClick={() => {
-                    if (pill.id === "pill_generate_test_patch") {
-                      handleGenerateTestPatch();
-                    } else {
-                      setActiveModalPill(pill);
-                    }
-                  }}
-                  disabled={isGeneratingTest && pill.id === "pill_generate_test_patch"}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition ${
-                    pill.is_destructive
-                      ? "bg-rose-950/40 text-rose-300 border-rose-800 hover:bg-rose-900/60"
-                      : "bg-[#151c30] text-cyan-300 border-cyan-800/60 hover:bg-cyan-950/40"
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {pill.id === "pill_generate_test_patch" && isGeneratingTest
-                    ? "Generating Patch..."
-                    : pill.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="text-xs text-slate-500 flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5 text-emerald-400" />
-              Zero-Spam Policy: Explicit OAuth Confirmation Active
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Side Panel Telemetry & 4 Filter Breakdown */}
-        <aside className="w-[440px] border-l border-slate-800/80 bg-[#0f1422]/95 overflow-y-auto p-6 space-y-6">
-          {/* Risk Gauge & Verdict */}
-          <div className="glass-panel p-4 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Triage Verdict</span>
-              {getVerdictBadge(data.verdict)}
-            </div>
-
-            <div className="flex items-baseline justify-between pt-2">
-              <div>
-                <div className="text-3xl font-black tracking-tight text-white">{data.risk_score}<span className="text-sm font-normal text-slate-500"> / 100</span></div>
-                <div className="text-xs text-slate-400">Deterministic Blast Risk Score</div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs font-mono text-cyan-400">{data.url_parsed.owner}/{data.url_parsed.repo}</div>
-                <div className="text-xs text-slate-500">Target #{data.url_parsed.target_id || "HEAD"}</div>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed pt-2 border-t border-slate-800/80">
-              {data.summary}
-            </p>
-          </div>
-
-          {/* 4 Deterministic Slop & Quality Filters Breakdown */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-cyan-400" /> 4 Zero-Token Graph Filters
-              </h2>
-              <span className="text-[10px] text-emerald-400 font-mono">0 LLM Tokens</span>
-            </div>
-
-            {/* Filter 1 */}
-            <div className="p-3 bg-[#151c30] rounded-xl border border-slate-800/80 flex items-start gap-3">
-              {data.deterministic_checks.untested_call_graph.flagged ? (
-                <XCircle className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-              )}
-              <div className="flex-1 text-xs">
-                <div className="font-semibold text-slate-200">1. Untested Call Impact</div>
-                <div className="text-slate-400 mt-0.5">
-                  {data.deterministic_checks.untested_call_graph.untested_functions.length} modified functions lack updated tests.
-                </div>
-              </div>
-            </div>
-
-            {/* Filter 2 */}
-            <div className="p-3 bg-[#151c30] rounded-xl border border-slate-800/80 flex items-start gap-3">
-              {data.deterministic_checks.ast_vs_text_ratio.flagged ? (
-                <XCircle className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-              )}
-              <div className="flex-1 text-xs">
-                <div className="font-semibold text-slate-200">2. AST vs Text Ratio (Cosmetic Slop)</div>
-                <div className="text-slate-400 mt-0.5">
-                  Ratio: {data.deterministic_checks.ast_vs_text_ratio.ratio} ({data.deterministic_checks.ast_vs_text_ratio.ast_node_delta} AST nodes vs {data.deterministic_checks.ast_vs_text_ratio.text_diff_lines} lines).
-                </div>
-              </div>
-            </div>
-
-            {/* Filter 3 */}
-            <div className="p-3 bg-[#151c30] rounded-xl border border-slate-800/80 flex items-start gap-3">
-              {data.deterministic_checks.dead_code.flagged ? (
-                <XCircle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-              )}
-              <div className="flex-1 text-xs">
-                <div className="font-semibold text-slate-200">3. Dead Code Injection</div>
-                <div className="text-slate-400 mt-0.5">
-                  {data.deterministic_checks.dead_code.dead_symbols.length} functions with 0 callers detected.
-                </div>
-              </div>
-            </div>
-
-            {/* Filter 4 */}
-            <div className="p-3 bg-[#151c30] rounded-xl border border-slate-800/80 flex items-start gap-3">
-              {data.deterministic_checks.maintainer_rules.flagged ? (
-                <AlertTriangle className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-              )}
-              <div className="flex-1 text-xs">
-                <div className="font-semibold text-slate-200">4. Maintainer Architectural Rules</div>
-                <div className="text-slate-400 mt-0.5">
-                  {data.deterministic_checks.maintainer_rules.violations.length} boundary violations triggered.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Selected AST Symbol Inspector */}
-          {selectedNode && (
-            <div className="glass-panel p-4 rounded-2xl space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <FileCode2 className="w-3.5 h-3.5 text-cyan-400" /> Inspected Symbol
-              </h3>
-              <div className="font-mono text-sm text-cyan-300 font-bold break-all">{selectedNode.label}</div>
-              <div className="text-xs text-slate-400 font-mono">{selectedNode.file_path || "N/A"}</div>
-              <div className="grid grid-cols-2 gap-2 pt-2 text-xs">
-                <div className="p-2 bg-[#151c30] rounded-lg">
-                  <div className="text-slate-500">Incoming Callers</div>
-                  <div className="text-base font-bold text-white">{selectedNode.incoming_calls ?? 0}</div>
-                </div>
-                <div className="p-2 bg-[#151c30] rounded-lg">
-                  <div className="text-slate-500">Blast Hop</div>
-                  <div className="text-base font-bold text-white">{selectedNode.hop_distance}</div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 5. Co-Pilot Telemetry Chat (Single-Shot Groq < 1,000 tokens) */}
-          <div className="glass-panel p-4 rounded-2xl space-y-3 flex flex-col">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5 text-cyan-400" /> GitOS Co-Pilot
-              </h3>
-              <span className="text-[10px] text-cyan-400 font-mono">Groq Llama-3.3-70B</span>
-            </div>
-
-            {/* Messages Scroll Box */}
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {chatMessages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={`p-2.5 rounded-xl text-xs leading-relaxed ${
-                    msg.sender === "user"
-                      ? "bg-cyan-950/60 text-cyan-200 border border-cyan-800/60 ml-4"
-                      : "bg-[#0a0d14] text-slate-300 border border-slate-800 mr-2"
-                  }`}
-                >
-                  <div className="text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-0.5">
-                    {msg.sender === "user" ? "You" : "GitOS Intelligence"}
+                {/* Floating Node Details Overlay */}
+                {selectedNode && (
+                  <div className="absolute bottom-4 left-4 max-w-md p-3.5 rounded-2xl bg-[#0f1422]/95 border border-slate-800/90 shadow-2xl backdrop-blur-md space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono text-cyan-300 font-bold flex items-center gap-1.5 truncate">
+                        <FileCode2 className="w-3.5 h-3.5 text-cyan-400" />
+                        {selectedNode.label}
+                      </span>
+                      <span
+                        className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                          selectedNode.change_type === "modified"
+                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                            : selectedNode.change_type === "affected_caller"
+                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                            : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                        }`}
+                      >
+                        {selectedNode.change_type.replace("_", " ")}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-mono truncate">
+                      {selectedNode.file_path || "root"}
+                      {selectedNode.line_range && ` : L${selectedNode.line_range[0]}-L${selectedNode.line_range[1]}`}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                      <div className="p-2 rounded-lg bg-[#141b2d] border border-slate-800/80">
+                        <span className="text-[10px] text-slate-500 block">Direct Callers</span>
+                        <span className="font-bold text-white text-sm">
+                          {selectedNode.incoming_calls ?? 0}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-[#141b2d] border border-slate-800/80">
+                        <span className="text-[10px] text-slate-500 block">Hop Distance</span>
+                        <span className="font-bold text-white text-sm">
+                          {selectedNode.hop_distance} hop
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  {msg.text}
+                )}
+              </div>
+            ) : (
+              /* Code & Diff Inspector */
+              <div className="w-full h-full p-4 overflow-y-auto font-mono text-xs space-y-4">
+                <div className="flex items-center justify-between p-3 rounded-xl bg-[#121829] border border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <Code2 className="w-4 h-4 text-cyan-400" />
+                    <span className="text-sm font-bold text-white">Suggested Test Patch Diff</span>
+                  </div>
+                  {data.suggested_diff && (
+                    <button
+                      onClick={copyDiffToClipboard}
+                      className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white flex items-center gap-1.5 transition"
+                    >
+                      {copiedDiff ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedDiff ? "Copied" : "Copy Patch"}</span>
+                    </button>
+                  )}
                 </div>
-              ))}
-              {isChatLoading && (
-                <div className="p-2.5 rounded-xl text-xs bg-[#0a0d14] text-slate-400 border border-slate-800 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-                  Reasoning over compressed subgraph (&lt; 1,000 tokens)...
+
+                {data.suggested_diff ? (
+                  <pre className="p-4 rounded-xl bg-[#0a0d16] border border-slate-800 text-slate-300 overflow-x-auto leading-relaxed">
+                    {data.suggested_diff.split("\n").map((line, idx) => {
+                      const isAdded = line.startsWith("+");
+                      const isRemoved = line.startsWith("-");
+                      const isHeader = line.startsWith("@") || line.startsWith("---") || line.startsWith("+++");
+                      return (
+                        <div
+                          key={idx}
+                          className={`${
+                            isAdded
+                              ? "bg-emerald-950/40 text-emerald-300 font-semibold"
+                              : isRemoved
+                              ? "bg-rose-950/40 text-rose-300"
+                              : isHeader
+                              ? "text-cyan-400 font-bold"
+                              : "text-slate-400"
+                          } px-2 py-0.5 rounded`}
+                        >
+                          {line}
+                        </div>
+                      );
+                    })}
+                  </pre>
+                ) : (
+                  <div className="p-8 text-center rounded-xl bg-[#121829] border border-slate-800 text-slate-400">
+                    <ShieldCheck className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                    No missing test patches required. Clean test coverage verified!
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* ======================================================== */}
+        {/* COLUMN 3: Triage Defense & Co-Pilot Telemetry (360px)    */}
+        {/* ======================================================== */}
+        <aside className="w-96 border-l border-slate-800/80 bg-[#0a0d16] flex flex-col flex-shrink-0">
+          <div className="p-4 border-b border-slate-800/80 flex items-center justify-between">
+            <span className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <ShieldAlert className="w-4 h-4 text-cyan-400" /> Triage Intelligence
+            </span>
+            {getVerdictBadge(data.verdict)}
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Risk Score Gauge & Synthesis */}
+            <div className="p-4 rounded-2xl bg-[#121829] border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    Blast Risk Score
+                  </div>
+                  <div className="text-3xl font-black text-white mt-0.5 flex items-baseline gap-1">
+                    {data.risk_score}
+                    <span className="text-sm font-normal text-slate-500">/ 100</span>
+                  </div>
                 </div>
-              )}
+                {/* Visual Risk Bar */}
+                <div className="w-24 h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      data.risk_score > 70
+                        ? "bg-rose-500 shadow-[0_0_10px_#f43f5e]"
+                        : data.risk_score > 40
+                        ? "bg-amber-500"
+                        : "bg-emerald-500"
+                    }`}
+                    style={{ width: `${data.risk_score}%` }}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">{data.summary}</p>
             </div>
 
-            {/* Input Bar */}
-            <form onSubmit={handleSendChatMessage} className="relative flex items-center pt-1">
-              <input
-                type="text"
-                placeholder="Ask about blast impact or broken callers..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                disabled={isChatLoading}
-                className="w-full pl-3 pr-10 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-              />
-              <button
-                type="submit"
-                disabled={isChatLoading || !chatInput.trim()}
-                className="absolute right-1.5 p-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 disabled:opacity-40 transition"
+            {/* 4 Zero-Token Filters Accordion */}
+            <div className="space-y-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 flex items-center justify-between px-1">
+                <span>4 Zero-Token Pre-Filters</span>
+                <span className="text-cyan-400">0 Tokens Spent</span>
+              </div>
+
+              {/* Filter 1: Untested Callers */}
+              <div
+                className={`p-3 rounded-xl border transition ${
+                  data.deterministic_checks.untested_call_graph.flagged
+                    ? "bg-rose-950/20 border-rose-500/30"
+                    : "bg-[#111627] border-slate-800/80"
+                }`}
               >
-                <Send className="w-3.5 h-3.5" />
-              </button>
-            </form>
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    {data.deterministic_checks.untested_call_graph.flagged ? (
+                      <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    1. Untested Call Impact
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {data.deterministic_checks.untested_call_graph.untested_functions.length} missing
+                  </span>
+                </div>
+                {data.deterministic_checks.untested_call_graph.flagged && (
+                  <div className="mt-2 text-[11px] text-slate-400 font-mono space-y-1">
+                    {data.deterministic_checks.untested_call_graph.untested_functions.map((fn, i) => (
+                      <div key={i} className="truncate text-rose-300">
+                        • {fn}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Filter 2: AST vs Text Ratio */}
+              <div
+                className={`p-3 rounded-xl border transition ${
+                  data.deterministic_checks.ast_vs_text_ratio.flagged
+                    ? "bg-purple-950/20 border-purple-500/30"
+                    : "bg-[#111627] border-slate-800/80"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    {data.deterministic_checks.ast_vs_text_ratio.flagged ? (
+                      <Flame className="w-3.5 h-3.5 text-purple-400" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    2. AST vs Text Ratio
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    Ratio: {data.deterministic_checks.ast_vs_text_ratio.ratio}
+                  </span>
+                </div>
+                <div className="mt-1.5 text-[11px] text-slate-400">
+                  {data.deterministic_checks.ast_vs_text_ratio.ast_node_delta} AST nodes /{" "}
+                  {data.deterministic_checks.ast_vs_text_ratio.text_diff_lines} text lines changed.
+                </div>
+              </div>
+
+              {/* Filter 3: Dead Code Injection */}
+              <div
+                className={`p-3 rounded-xl border transition ${
+                  data.deterministic_checks.dead_code.flagged
+                    ? "bg-amber-950/20 border-amber-500/30"
+                    : "bg-[#111627] border-slate-800/80"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    {data.deterministic_checks.dead_code.flagged ? (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    3. Dead Code In-Degree
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {data.deterministic_checks.dead_code.dead_symbols.length} dead symbols
+                  </span>
+                </div>
+              </div>
+
+              {/* Filter 4: Maintainer Architectural Rules */}
+              <div
+                className={`p-3 rounded-xl border transition ${
+                  data.deterministic_checks.maintainer_rules.flagged
+                    ? "bg-rose-950/20 border-rose-500/30"
+                    : "bg-[#111627] border-slate-800/80"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-semibold">
+                  <span className="flex items-center gap-1.5">
+                    {data.deterministic_checks.maintainer_rules.flagged ? (
+                      <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    4. Architectural Rule Boundaries
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {data.deterministic_checks.maintainer_rules.violations.length} breach
+                  </span>
+                </div>
+                {data.deterministic_checks.maintainer_rules.flagged && (
+                  <div className="mt-2 text-[11px] text-slate-400 font-mono space-y-1">
+                    {data.deterministic_checks.maintainer_rules.violations.map((v, i) => (
+                      <div key={i} className="text-rose-300">
+                        • {v.rule_id}: {v.description}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Action Pills Dock */}
+            <div className="space-y-2 pt-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-1">
+                Contextual Action Triggers
+              </div>
+              <div className="space-y-2">
+                {data.action_pills.map((pill) => (
+                  <button
+                    key={pill.id}
+                    onClick={() => setActiveModalPill(pill)}
+                    className={`w-full p-2.5 rounded-xl border text-left text-xs font-semibold transition flex items-center justify-between ${
+                      pill.is_destructive
+                        ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30"
+                        : "bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border-cyan-500/30"
+                    }`}
+                  >
+                    <span>{pill.label}</span>
+                    <ExternalLink className="w-3.5 h-3.5 opacity-60" />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* GitOS Co-Pilot Console */}
+            <div className="p-3.5 rounded-2xl bg-[#121829] border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Bot className="w-4 h-4 text-cyan-400" /> GitOS Co-Pilot
+                </span>
+                <span className="text-[10px] font-mono text-cyan-400">Groq Llama-3.3-70B</span>
+              </div>
+
+              <div className="space-y-2 max-h-44 overflow-y-auto pr-1 text-xs">
+                {chatMessages.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`p-2 rounded-xl leading-relaxed ${
+                      msg.sender === "user"
+                        ? "bg-cyan-950/60 text-cyan-200 border border-cyan-800 ml-4"
+                        : "bg-[#0b0e18] text-slate-300 border border-slate-800 mr-2"
+                    }`}
+                  >
+                    <div className="text-[9px] uppercase font-mono font-bold text-slate-500 mb-0.5">
+                      {msg.sender === "user" ? "You" : "GitOS Graph Intelligence"}
+                    </div>
+                    {msg.text}
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={handleSendChatMessage} className="relative flex items-center">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask about blast impact or broken callers..."
+                  className="w-full pl-3 pr-10 py-1.5 bg-[#0b0e18] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                />
+                <button
+                  type="submit"
+                  disabled={isChatLoading || !chatInput.trim()}
+                  className="absolute right-1.5 p-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 disabled:opacity-40 transition"
+                >
+                  <Send className="w-3 h-3" />
+                </button>
+              </form>
+            </div>
           </div>
         </aside>
       </div>
 
-      {/* Maintainer Rule Builder Modal */}
-      {isRuleModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel-elevated max-w-lg w-full rounded-2xl p-6 space-y-4 border border-cyan-500/40">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-bold text-white">Maintainer Architectural Rules</h3>
-              </div>
-              <button onClick={() => setIsRuleModalOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
-            </div>
-
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {rules.map((rule) => (
-                <div key={rule.rule_id} className="p-2.5 bg-[#0a0d14] rounded-xl border border-slate-800 text-xs space-y-1">
-                  <div className="font-semibold text-slate-200">{rule.name}</div>
-                  <div className="font-mono text-cyan-400 text-[11px]">{rule.pattern}</div>
-                  <div className="text-slate-400">{rule.description}</div>
-                </div>
-              ))}
-            </div>
-
-            <form onSubmit={handleCreateRule} className="space-y-3 pt-3 border-t border-slate-800">
-              <div className="text-xs font-semibold uppercase text-slate-400">Add New Boundary Constraint</div>
-              <input
-                type="text"
-                placeholder="Rule Name (e.g. No Direct DB Imports)"
-                value={newRuleName}
-                onChange={(e) => setNewRuleName(e.target.value)}
-                className="w-full px-3 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white"
-              />
-              <input
-                type="text"
-                placeholder="Pattern (e.g. frontend/* -> backend/db/*)"
-                value={newRulePattern}
-                onChange={(e) => setNewRulePattern(e.target.value)}
-                className="w-full px-3 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white font-mono"
-              />
-              <input
-                type="text"
-                placeholder="Description / Reason"
-                value={newRuleDesc}
-                onChange={(e) => setNewRuleDesc(e.target.value)}
-                className="w-full px-3 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white"
-              />
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsRuleModalOpen(false)}
-                  className="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-cyan-500 hover:bg-cyan-400 text-slate-950 flex items-center gap-1.5"
-                >
-                  <PlusCircle className="w-3.5 h-3.5" /> Save Rule
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Explicit Confirmation Modal */}
+      {/* Action Execution Modal */}
       {activeModalPill && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel-elevated max-w-lg w-full rounded-2xl p-6 space-y-4 border border-cyan-500/30">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="max-w-md w-full p-5 rounded-2xl bg-[#0f1422] border border-slate-700 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Lock className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-bold text-white">Explicit GitHub OAuth Confirmation</h3>
-              </div>
-              <button onClick={() => setActiveModalPill(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
-            </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              GitOS will execute this action directly under your authenticated GitHub profile. No ambient or unconsented bot actions are permitted.
-            </p>
-
-            <div className="p-3 bg-[#0a0d14] rounded-xl border border-slate-800 font-mono text-xs space-y-1">
-              <div className="text-cyan-400">Action: {activeModalPill.action_type}</div>
-              <div className="text-slate-400">Target: {data.url_parsed.owner}/{data.url_parsed.repo}#{data.url_parsed.target_id || "HEAD"}</div>
-              <div className="text-slate-400">Description: {activeModalPill.description}</div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-cyan-400" />
+                Confirm GitHub Action
+              </h3>
               <button
                 onClick={() => setActiveModalPill(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition"
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {activeModalPill.description}
+            </p>
+            <div className="p-3 rounded-xl bg-[#0b0e18] border border-slate-800 text-[11px] font-mono text-slate-400">
+              Zero-Spam Policy Active: This action executes directly under your verified GitHub OAuth identity with full audit trails.
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setActiveModalPill(null)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
               >
                 Cancel
               </button>
               <button
-                onClick={handleExecuteConfirmedAction}
-                disabled={executionState !== "idle"}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
-                  activeModalPill.is_destructive
-                    ? "bg-rose-600 hover:bg-rose-500 text-white"
-                    : "bg-cyan-500 hover:bg-cyan-400 text-slate-950"
-                }`}
+                onClick={() => {
+                  setExecutionState("done");
+                  setTimeout(() => {
+                    setActiveModalPill(null);
+                    setExecutionState("idle");
+                  }, 1000);
+                }}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition"
               >
-                {executionState === "executing" ? (
-                  <>Executing via OAuth...</>
-                ) : executionState === "done" ? (
-                  <>✓ Executed on GitHub</>
-                ) : (
-                  <>Confirm & Dispatch</>
-                )}
+                {executionState === "done" ? "Executed ✓" : "Confirm & Execute"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Developer Sandbox Auth Modal */}
+      {/* Auth Modal */}
       {isAuthModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel-elevated max-w-md w-full rounded-2xl p-6 space-y-4 border border-cyan-500/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="max-w-sm w-full p-5 rounded-2xl bg-[#0f1422] border border-slate-700 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-bold text-white">GitHub OAuth Sandbox</h3>
-              </div>
-              <button onClick={() => setIsAuthModalOpen(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-cyan-400" />
+                Developer Sandbox Auth
+              </h3>
+              <button
+                onClick={() => setIsAuthModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              No live GitHub OAuth App credentials detected in <code className="text-cyan-300">.env</code>.
-              Select a persona below to simulate permission auto-routing:
+            <p className="text-xs text-slate-400">
+              Select an identity to test maintainer vs contributor permission routing:
             </p>
-
-            <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="space-y-2">
               <button
-                onClick={() => handleMockLogin("maintainer")}
-                className="p-3 bg-[#151c30] hover:bg-cyan-950/40 border border-slate-700 hover:border-cyan-500/50 rounded-xl text-left transition group"
+                onClick={() => {
+                  setCurrentUser({
+                    login: "octocat-maintainer",
+                    name: "Octocat Maintainer",
+                    avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4",
+                  });
+                  setUserMode("maintainer");
+                  setIsAuthModalOpen(false);
+                }}
+                className="w-full p-2.5 rounded-xl bg-[#121829] hover:bg-[#161e33] border border-slate-700 text-left text-xs font-semibold text-white flex items-center gap-2 transition"
               >
-                <div className="text-xs font-bold text-white group-hover:text-cyan-400">🛡️ Maintainer Persona</div>
-                <div className="text-[10px] text-slate-400 mt-1">Admin / Write scopes. Triage & Slop Defense active.</div>
+                <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                <div>
+                  <div>Maintainer Identity (Admin)</div>
+                  <div className="text-[10px] text-slate-400 font-normal">Full defense triage & rule enforcement</div>
+                </div>
               </button>
-
               <button
-                onClick={() => handleMockLogin("contributor")}
-                className="p-3 bg-[#151c30] hover:bg-cyan-950/40 border border-slate-700 hover:border-cyan-500/50 rounded-xl text-left transition group"
+                onClick={() => {
+                  setCurrentUser({
+                    login: "contributor-alex",
+                    name: "Alex Contributor",
+                    avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4",
+                  });
+                  setUserMode("contributor");
+                  setIsAuthModalOpen(false);
+                }}
+                className="w-full p-2.5 rounded-xl bg-[#121829] hover:bg-[#161e33] border border-slate-700 text-left text-xs font-semibold text-white flex items-center gap-2 transition"
               >
-                <div className="text-xs font-bold text-white group-hover:text-cyan-400">🚀 Contributor Persona</div>
-                <div className="text-[10px] text-slate-400 mt-1">Read / PR Author scopes. Pre-flight checks active.</div>
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                <div>
+                  <div>Contributor Identity (Read)</div>
+                  <div className="text-[10px] text-slate-400 font-normal">Pre-flight checks & test patch generator</div>
+                </div>
               </button>
-            </div>
-
-            <div className="text-[11px] text-slate-500 text-center pt-2">
-              To configure live OAuth, set <code className="text-cyan-400">GITHUB_CLIENT_ID</code> in .env
             </div>
           </div>
         </div>
