@@ -9,15 +9,18 @@ import {
   Activity,
   Layers,
   Sparkles,
-  ExternalLink,
   AlertTriangle,
   FileCode2,
   CheckCircle2,
   XCircle,
-  HelpCircle,
   Cpu,
-  Send,
   Lock,
+  PlusCircle,
+  Sliders,
+  Database,
+  RefreshCw,
+  Code2,
+  X,
 } from "lucide-react";
 
 // Types matching shared_contract.json
@@ -50,6 +53,7 @@ interface BlastEdge {
   source: string;
   target: string;
   relationship: string;
+  is_cross_file?: boolean;
 }
 
 interface ActionPill {
@@ -59,6 +63,14 @@ interface ActionPill {
   is_destructive: boolean;
   description: string;
   payload: Record<string, any>;
+}
+
+interface MaintainerRule {
+  rule_id: string;
+  name: string;
+  pattern: string;
+  severity: string;
+  description: string;
 }
 
 interface AnalysisData {
@@ -82,11 +94,14 @@ interface AnalysisData {
     commit_sha: string;
     cached_replay: boolean;
     latency_ms: number;
+    live_fetched?: boolean;
     timestamp: string;
   };
 }
 
-// Sample fallback initial payload
+// Configurable API base URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 const INITIAL_DEMO_DATA: AnalysisData = {
   analysis_id: "demo-7f13b6f9",
   url_parsed: {
@@ -121,9 +136,9 @@ const INITIAL_DEMO_DATA: AnalysisData = {
       flagged: true,
       violations: [
         {
-          rule_id: "RULE_NO_DIRECT_ENGINE_TOUCH",
-          description: "Public router module cannot bypass routing adapters to dispatch directly",
-          offending_node: "APIRouter.add_api_route -> RoutingEngine.dispatch",
+          rule_id: "RULE_NO_DIRECT_DB_IMPORT",
+          description: "Frontend UI module violates boundary by directly referencing database tier",
+          offending_node: "src/gateway.ts -> backend/db/models.py",
         },
       ],
     },
@@ -141,26 +156,15 @@ const INITIAL_DEMO_DATA: AnalysisData = {
       outgoing_calls: 3,
     },
     {
-      id: "fastapi/applications.py::FastAPI.include_router",
-      label: "FastAPI.include_router",
+      id: "src/gateway.ts::registerRoutes",
+      label: "GatewayController.registerRoutes",
       type: "function",
-      file_path: "fastapi/applications.py",
+      file_path: "src/gateway.ts",
       line_range: [82, 110],
       hop_distance: 1,
       change_type: "affected_caller",
       incoming_calls: 26,
       outgoing_calls: 2,
-    },
-    {
-      id: "fastapi/routing.py::APIRouter.api_route",
-      label: "APIRouter.api_route",
-      type: "function",
-      file_path: "fastapi/routing.py",
-      line_range: [190, 210],
-      hop_distance: 1,
-      change_type: "affected_caller",
-      incoming_calls: 8,
-      outgoing_calls: 1,
     },
     {
       id: "tests/test_routing.py::test_router_signature",
@@ -176,18 +180,14 @@ const INITIAL_DEMO_DATA: AnalysisData = {
   ],
   blast_radius_edges: [
     {
-      source: "fastapi/applications.py::FastAPI.include_router",
+      source: "src/gateway.ts::registerRoutes",
       target: "fastapi/routing.py::APIRouter.add_api_route",
       relationship: "CALLS",
-    },
-    {
-      source: "fastapi/routing.py::APIRouter.api_route",
-      target: "fastapi/routing.py::APIRouter.add_api_route",
-      relationship: "CALLS",
+      is_cross_file: true,
     },
     {
       source: "tests/test_routing.py::test_router_signature",
-      target: "fastapi/routing.py::APIRouter.api_route",
+      target: "fastapi/routing.py::APIRouter.add_api_route",
       relationship: "TESTED_BY",
     },
   ],
@@ -214,6 +214,7 @@ const INITIAL_DEMO_DATA: AnalysisData = {
     commit_sha: "a1b2c3d4e5f67890123456789abcdef012345678",
     cached_replay: false,
     latency_ms: 310,
+    live_fetched: false,
     timestamp: new Date().toISOString(),
   },
 };
@@ -227,6 +228,15 @@ export default function GitOSDashboard() {
   const [selectedNode, setSelectedNode] = useState<BlastNode | null>(INITIAL_DEMO_DATA.blast_radius_nodes[0]);
   const [activeModalPill, setActiveModalPill] = useState<ActionPill | null>(null);
   const [executionState, setExecutionState] = useState<"idle" | "executing" | "done">("idle");
+  const [rateLimitRem, setRateLimitRem] = useState<number>(5000);
+  const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff">("graph");
+
+  // Rule Builder Modal State
+  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
+  const [rules, setRules] = useState<MaintainerRule[]>([]);
+  const [newRuleName, setNewRuleName] = useState("");
+  const [newRulePattern, setNewRulePattern] = useState("");
+  const [newRuleDesc, setNewRuleDesc] = useState("");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -240,12 +250,35 @@ export default function GitOSDashboard() {
     else setDetectedType("unknown");
   }, [urlInput]);
 
+  // Fetch health & existing rules
+  useEffect(() => {
+    const fetchHealthAndRules = async () => {
+      try {
+        const hRes = await fetch(`${API_BASE_URL}/api/health`);
+        if (hRes.ok) {
+          const hData = await hRes.json();
+          if (hData.github_rate_limit_remaining !== undefined) {
+            setRateLimitRem(hData.github_rate_limit_remaining);
+          }
+        }
+        const rRes = await fetch(`${API_BASE_URL}/api/rules`);
+        if (rRes.ok) {
+          const rData = await rRes.json();
+          setRules(rData.rules || []);
+        }
+      } catch {
+        // Backend offline fallback
+      }
+    };
+    fetchHealthAndRules();
+  }, []);
+
   // Execute Analysis via API
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsAnalyzing(true);
     try {
-      const res = await fetch("http://localhost:8000/api/analyze", {
+      const res = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: urlInput, user_mode: userMode }),
@@ -264,8 +297,39 @@ export default function GitOSDashboard() {
     }
   };
 
+  // Add Maintainer Rule
+  const handleCreateRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRuleName || !newRulePattern) return;
+
+    const ruleObj: MaintainerRule = {
+      rule_id: `RULE_${newRuleName.toUpperCase().replace(/\s+/g, "_")}`,
+      name: newRuleName,
+      pattern: newRulePattern,
+      severity: "high",
+      description: newRuleDesc || `Custom rule enforcing ${newRulePattern}`,
+    };
+
+    try {
+      await fetch(`${API_BASE_URL}/api/rules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ruleObj),
+      });
+      setRules([...rules, ruleObj]);
+      setNewRuleName("");
+      setNewRulePattern("");
+      setNewRuleDesc("");
+      setIsRuleModalOpen(false);
+    } catch {
+      setRules([...rules, ruleObj]);
+      setIsRuleModalOpen(false);
+    }
+  };
+
   // Canvas Force Graph Simulation
   useEffect(() => {
+    if (activeViewTab !== "graph") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -275,13 +339,10 @@ export default function GitOSDashboard() {
     const width = (canvas.width = canvas.parentElement?.clientWidth || 800);
     const height = (canvas.height = canvas.parentElement?.clientHeight || 600);
 
-    // Initialize positions
     const nodes = data.blast_radius_nodes.map((n, i) => ({
       ...n,
-      x: width / 2 + Math.cos((i * 2 * Math.PI) / data.blast_radius_nodes.length) * 160,
-      y: height / 2 + Math.sin((i * 2 * Math.PI) / data.blast_radius_nodes.length) * 160,
-      vx: 0,
-      vy: 0,
+      x: width / 2 + Math.cos((i * 2 * Math.PI) / data.blast_radius_nodes.length) * 170,
+      y: height / 2 + Math.sin((i * 2 * Math.PI) / data.blast_radius_nodes.length) * 170,
     }));
 
     const render = () => {
@@ -295,9 +356,15 @@ export default function GitOSDashboard() {
           ctx.beginPath();
           ctx.moveTo(src.x, src.y);
           ctx.lineTo(tgt.x, tgt.y);
-          ctx.strokeStyle = edge.relationship === "TESTED_BY" ? "rgba(16, 185, 129, 0.4)" : "rgba(56, 189, 248, 0.3)";
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([4, 4]);
+          if (edge.relationship === "TESTED_BY") {
+            ctx.strokeStyle = "rgba(16, 185, 129, 0.4)";
+          } else if (edge.is_cross_file) {
+            ctx.strokeStyle = "rgba(244, 63, 94, 0.6)";
+          } else {
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.3)";
+          }
+          ctx.lineWidth = edge.is_cross_file ? 2 : 1.5;
+          ctx.setLineDash(edge.is_cross_file ? [6, 3] : [3, 3]);
           ctx.stroke();
           ctx.setLineDash([]);
         }
@@ -323,11 +390,10 @@ export default function GitOSDashboard() {
           ctx.shadowColor = "#38bdf8";
         }
 
-        ctx.shadowBlur = isSelected ? 18 : 8;
+        ctx.shadowBlur = isSelected ? 20 : 8;
         ctx.fill();
         ctx.shadowBlur = 0;
 
-        // Label
         ctx.fillStyle = "#e2e8f0";
         ctx.font = "11px -apple-system, sans-serif";
         ctx.textAlign = "center";
@@ -339,12 +405,28 @@ export default function GitOSDashboard() {
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [data, selectedNode]);
+  }, [data, selectedNode, activeViewTab]);
 
   // Handle explicit action execution
   const handleExecuteConfirmedAction = async () => {
+    if (!activeModalPill) return;
     setExecutionState("executing");
-    await new Promise((r) => setTimeout(r, 900));
+    try {
+      await fetch(`${API_BASE_URL}/api/execute-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: activeModalPill.action_type,
+          owner: data.url_parsed.owner,
+          repo: data.url_parsed.repo,
+          target_id: data.url_parsed.target_id,
+          payload: activeModalPill.payload,
+          confirmed: true,
+        }),
+      });
+    } catch {
+      // In demo mode
+    }
     setExecutionState("done");
     setTimeout(() => {
       setActiveModalPill(null);
@@ -375,7 +457,7 @@ export default function GitOSDashboard() {
           </div>
           <div>
             <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
-              GitOS <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">FalkorDB Inside</span>
+              GitOS <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">Polyglot Graph</span>
             </h1>
           </div>
         </div>
@@ -388,7 +470,7 @@ export default function GitOSDashboard() {
               type="text"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="Paste any GitHub URL (Repo, PR, Issue, or Blob)..."
+              placeholder="Paste any GitHub URL (Python, TS, Go, Rust, Java, etc.)..."
               className="w-full pl-10 pr-32 py-2 bg-[#151c30] border border-slate-700/80 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition"
             />
             <div className="absolute right-2 flex items-center gap-1.5">
@@ -406,48 +488,103 @@ export default function GitOSDashboard() {
           </div>
         </form>
 
-        {/* Dual Mode Switcher */}
-        <div className="flex items-center gap-2 bg-[#151c30] p-1 rounded-xl border border-slate-800">
+        {/* Action Controls & Mode Switcher */}
+        <div className="flex items-center gap-3">
+          {/* Rate limit badge */}
+          <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#151c30] border border-slate-800">
+            <Database className="w-3.5 h-3.5 text-cyan-400" />
+            API: {rateLimitRem} req/hr
+          </div>
+
+          {/* Maintainer Rule Builder Trigger */}
           <button
-            onClick={() => setUserMode("maintainer")}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
-              userMode === "maintainer"
-                ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-semibold"
-                : "text-slate-400 hover:text-white"
-            }`}
+            onClick={() => setIsRuleModalOpen(true)}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#151c30] hover:bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1.5 transition"
           >
-            🛡️ Maintainer Mode
+            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+            Rules ({rules.length})
           </button>
-          <button
-            onClick={() => setUserMode("contributor")}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
-              userMode === "contributor"
-                ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-semibold"
-                : "text-slate-400 hover:text-white"
-            }`}
-          >
-            🚀 Contributor Mode
-          </button>
+
+          {/* Dual Mode Switcher */}
+          <div className="flex items-center gap-1.5 bg-[#151c30] p-1 rounded-xl border border-slate-800">
+            <button
+              onClick={() => setUserMode("maintainer")}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
+                userMode === "maintainer"
+                  ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-semibold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              🛡️ Maintainer
+            </button>
+            <button
+              onClick={() => setUserMode("contributor")}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
+                userMode === "contributor"
+                  ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 font-semibold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              🚀 Contributor
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Workspace: 3D Force Graph & Telemetry Grid */}
+      {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left/Center: 3D Force Graph Visualizer Canvas */}
+        {/* Left/Center Canvas View */}
         <div className="flex-1 relative flex flex-col">
+          {/* Tab Selector & Telemetry Bar */}
           <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+            <div className="flex items-center bg-[#0f1422]/90 backdrop-blur rounded-lg p-0.5 border border-slate-700">
+              <button
+                onClick={() => setActiveViewTab("graph")}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
+                  activeViewTab === "graph" ? "bg-cyan-500 text-slate-950 font-semibold" : "text-slate-400"
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5" /> 3D Blast Graph
+              </button>
+              <button
+                onClick={() => setActiveViewTab("diff")}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
+                  activeViewTab === "diff" ? "bg-cyan-500 text-slate-950 font-semibold" : "text-slate-400"
+                }`}
+              >
+                <Code2 className="w-3.5 h-3.5" /> Patch Diff
+              </button>
+            </div>
+
             <span className="px-2.5 py-1 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 text-xs font-mono text-slate-300 flex items-center gap-1.5">
-              <Activity className="w-3.5 h-3.5 text-cyan-400" />
-              Graph Engine: {data.blast_radius_nodes.length} AST Nodes | {data.blast_radius_edges.length} Edges
+              Nodes: {data.blast_radius_nodes.length} | Edges: {data.blast_radius_edges.length}
             </span>
-            <span className="px-2.5 py-1 rounded-md bg-slate-900/80 backdrop-blur border border-slate-700 text-xs font-mono text-slate-400">
-              Latency: {data.execution_metadata.latency_ms}ms
-            </span>
+
+            {data.execution_metadata.live_fetched && (
+              <span className="px-2.5 py-1 rounded-md bg-emerald-950/80 border border-emerald-700 text-xs font-mono text-emerald-400 flex items-center gap-1">
+                ✓ Live GitHub Streaming
+              </span>
+            )}
           </div>
 
-          <div className="flex-1 w-full h-full cursor-crosshair">
-            <canvas ref={canvasRef} className="w-full h-full block" />
-          </div>
+          {/* Canvas or Diff View */}
+          {activeViewTab === "graph" ? (
+            <div className="flex-1 w-full h-full cursor-crosshair">
+              <canvas ref={canvasRef} className="w-full h-full block" />
+            </div>
+          ) : (
+            <div className="flex-1 p-6 overflow-y-auto">
+              <div className="p-4 bg-[#0a0d14] rounded-2xl border border-slate-800">
+                <div className="text-xs font-mono text-slate-400 mb-2 flex items-center justify-between">
+                  <span>UNIFIED DIFF STREAM (IN-MEMORY PARSED)</span>
+                  <span className="text-cyan-400">{data.url_parsed.owner}/{data.url_parsed.repo}</span>
+                </div>
+                <pre className="font-mono text-xs text-slate-200 overflow-x-auto leading-relaxed">
+                  {data.suggested_diff || "No diff available for repository root."}
+                </pre>
+              </div>
+            </div>
+          )}
 
           {/* Contextual Action Dock at Canvas Bottom */}
           <div className="p-4 bg-[#0f1422]/90 backdrop-blur border-t border-slate-800/80 flex items-center justify-between z-20">
@@ -591,18 +728,73 @@ export default function GitOSDashboard() {
               </div>
             </div>
           )}
-
-          {/* Suggested Diff Preview */}
-          {data.suggested_diff && (
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Suggested Test Patch</h3>
-              <pre className="p-3 bg-[#0a0d14] border border-slate-800 rounded-xl font-mono text-[11px] text-emerald-400 overflow-x-auto leading-relaxed">
-                {data.suggested_diff}
-              </pre>
-            </div>
-          )}
         </aside>
       </div>
+
+      {/* Maintainer Rule Builder Modal */}
+      {isRuleModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass-panel-elevated max-w-lg w-full rounded-2xl p-6 space-y-4 border border-cyan-500/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">Maintainer Architectural Rules</h3>
+              </div>
+              <button onClick={() => setIsRuleModalOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {rules.map((rule) => (
+                <div key={rule.rule_id} className="p-2.5 bg-[#0a0d14] rounded-xl border border-slate-800 text-xs space-y-1">
+                  <div className="font-semibold text-slate-200">{rule.name}</div>
+                  <div className="font-mono text-cyan-400 text-[11px]">{rule.pattern}</div>
+                  <div className="text-slate-400">{rule.description}</div>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleCreateRule} className="space-y-3 pt-3 border-t border-slate-800">
+              <div className="text-xs font-semibold uppercase text-slate-400">Add New Boundary Constraint</div>
+              <input
+                type="text"
+                placeholder="Rule Name (e.g. No Direct DB Imports)"
+                value={newRuleName}
+                onChange={(e) => setNewRuleName(e.target.value)}
+                className="w-full px-3 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white"
+              />
+              <input
+                type="text"
+                placeholder="Pattern (e.g. frontend/* -> backend/db/*)"
+                value={newRulePattern}
+                onChange={(e) => setNewRulePattern(e.target.value)}
+                className="w-full px-3 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white font-mono"
+              />
+              <input
+                type="text"
+                placeholder="Description / Reason"
+                value={newRuleDesc}
+                onChange={(e) => setNewRuleDesc(e.target.value)}
+                className="w-full px-3 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white"
+              />
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRuleModalOpen(false)}
+                  className="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-cyan-500 hover:bg-cyan-400 text-slate-950 flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" /> Save Rule
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Explicit Confirmation Modal */}
       {activeModalPill && (
@@ -613,7 +805,7 @@ export default function GitOSDashboard() {
                 <Lock className="w-5 h-5 text-cyan-400" />
                 <h3 className="text-base font-bold text-white">Explicit GitHub OAuth Confirmation</h3>
               </div>
-              <button onClick={() => setActiveModalPill(null)} className="text-slate-400 hover:text-white">✕</button>
+              <button onClick={() => setActiveModalPill(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
