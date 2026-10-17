@@ -370,3 +370,65 @@ def stitch_cross_file_graph(
                 stitched_edges.append(edge)
 
     return all_nodes, stitched_edges
+
+
+# ==============================================================================
+# 4. Git Diff Hunk Line Intersect Matcher
+# ==============================================================================
+
+HUNK_HEADER_REGEX = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+def parse_patch_modified_lines(patch: str) -> Set[int]:
+    """
+    Parses unified diff hunks into a set of line numbers touched in the new file.
+    Enables exact symbol targeting rather than assuming all functions in a file changed.
+    """
+    modified_lines: Set[int] = set()
+    if not patch:
+        return modified_lines
+
+    current_line = 0
+    in_hunk = False
+
+    for line in patch.splitlines():
+        match = HUNK_HEADER_REGEX.match(line)
+        if match:
+            new_start = int(match.group(3))
+            current_line = new_start
+            in_hunk = True
+            continue
+
+        if in_hunk:
+            if line.startswith("+") and not line.startswith("+++"):
+                modified_lines.add(current_line)
+                current_line += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                # Deleted line corresponds to the current line position
+                modified_lines.add(max(1, current_line))
+            elif line.startswith(" "):
+                current_line += 1
+            elif line.startswith("\\"):
+                pass  # e.g. \ No newline at end of file
+
+    return modified_lines
+
+
+def is_node_modified_by_patch(node: Dict[str, Any], modified_lines: Set[int]) -> bool:
+    """
+    Checks if an AST node's line range intersects with the patch's modified lines.
+    """
+    if not modified_lines:
+        return True  # If no patch details available, default to modified
+
+    line_range = node.get("line_range")
+    if not line_range or len(line_range) != 2:
+        return True
+
+    start_line, end_line = line_range[0], line_range[1]
+    # Check if any modified line falls within [start_line, end_line]
+    for line_num in range(start_line, end_line + 1):
+        if line_num in modified_lines:
+            return True
+
+    return False
+

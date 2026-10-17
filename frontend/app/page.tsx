@@ -497,7 +497,9 @@ export default function GitOSCommandCenter() {
   const [selectedNode, setSelectedNode] = useState<BlastNode | null>(PRESET_SCENARIOS.fastapi_breaking.blast_radius_nodes[0]);
   const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff">("graph");
   const [activeModalPill, setActiveModalPill] = useState<ActionPill | null>(null);
-  const [executionState, setExecutionState] = useState<"idle" | "executing" | "done">("idle");
+  const [executionState, setExecutionState] = useState<"idle" | "executing" | "done" | "error">("idle");
+  const [actionFeedback, setActionFeedback] = useState<{ status: string; html_url?: string; message: string } | null>(null);
+  const [inspectorSubTab, setInspectorSubTab] = useState<"diff" | "callers">("diff");
   const [rateLimitRem, setRateLimitRem] = useState<number>(5000);
   const [copiedDiff, setCopiedDiff] = useState(false);
 
@@ -956,6 +958,41 @@ export default function GitOSCommandCenter() {
     }
   };
 
+  // Real GitHub Action Execution
+  const handleExecuteAction = async () => {
+    if (!activeModalPill) return;
+    setExecutionState("executing");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/execute-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action_type: activeModalPill.action_type,
+          owner: data.url_parsed.owner,
+          repo: data.url_parsed.repo,
+          target_id: data.url_parsed.target_id,
+          confirmed: true,
+          payload: {
+            verdict: data.verdict,
+            risk_score: data.risk_score,
+            summary: data.summary,
+            ...activeModalPill.payload,
+          },
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setActionFeedback(result);
+        setExecutionState("done");
+      } else {
+        setExecutionState("error");
+      }
+    } catch {
+      setExecutionState("error");
+    }
+  };
+
   const getVerdictBadge = (verdict: string) => {
     switch (verdict) {
       case "CRITICAL_BLAST":
@@ -1363,50 +1400,117 @@ export default function GitOSCommandCenter() {
             ) : (
               /* Code & Diff Inspector */
               <div className="w-full h-full p-4 overflow-y-auto font-mono text-xs space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-xl bg-[#121829] border border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <Code2 className="w-4 h-4 text-cyan-400" />
-                    <span className="text-sm font-bold text-white">Suggested Test Patch Diff</span>
+                {/* Symbol & File Target Header */}
+                <div className="p-3.5 rounded-xl bg-[#121829] border border-slate-800 flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">
+                      Target Symbol Scope
+                    </div>
+                    <div className="text-sm font-bold text-white flex items-center gap-2 mt-0.5">
+                      <FileCode2 className="w-4 h-4 text-cyan-400" />
+                      <span>{selectedNode?.label || "APIRouter.add_api_route"}</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                        {selectedNode?.file_path || "fastapi/routing.py"}
+                      </span>
+                    </div>
                   </div>
-                  {data.suggested_diff && (
-                    <button
-                      onClick={copyDiffToClipboard}
-                      className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white flex items-center gap-1.5 transition"
-                    >
-                      {copiedDiff ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedDiff ? "Copied" : "Copy Patch"}</span>
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center bg-[#0a0d16] p-0.5 rounded-lg border border-slate-800">
+                      <button
+                        onClick={() => setInspectorSubTab("diff")}
+                        className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                          inspectorSubTab === "diff"
+                            ? "bg-cyan-500 text-slate-950 shadow-sm"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Test Patch Diff
+                      </button>
+                      <button
+                        onClick={() => setInspectorSubTab("callers")}
+                        className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                          inspectorSubTab === "callers"
+                            ? "bg-cyan-500 text-slate-950 shadow-sm"
+                            : "text-slate-400 hover:text-white"
+                        }`}
+                      >
+                        Downstream Callers ({data.blast_radius_nodes.filter(n => n.change_type === "affected_caller").length})
+                      </button>
+                    </div>
+                    {inspectorSubTab === "diff" && data.suggested_diff && (
+                      <button
+                        onClick={copyDiffToClipboard}
+                        className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white flex items-center gap-1.5 transition"
+                      >
+                        {copiedDiff ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedDiff ? "Copied" : "Copy Patch"}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {data.suggested_diff ? (
-                  <pre className="p-4 rounded-xl bg-[#0a0d16] border border-slate-800 text-slate-300 overflow-x-auto leading-relaxed">
-                    {data.suggested_diff.split("\n").map((line, idx) => {
-                      const isAdded = line.startsWith("+");
-                      const isRemoved = line.startsWith("-");
-                      const isHeader = line.startsWith("@") || line.startsWith("---") || line.startsWith("+++");
-                      return (
-                        <div
-                          key={idx}
-                          className={`${
-                            isAdded
-                              ? "bg-emerald-950/40 text-emerald-300 font-semibold"
-                              : isRemoved
-                              ? "bg-rose-950/40 text-rose-300"
-                              : isHeader
-                              ? "text-cyan-400 font-bold"
-                              : "text-slate-400"
-                          } px-2 py-0.5 rounded`}
-                        >
-                          {line}
-                        </div>
-                      );
-                    })}
-                  </pre>
+                {inspectorSubTab === "diff" ? (
+                  data.suggested_diff ? (
+                    <pre className="p-4 rounded-xl bg-[#0a0d16] border border-slate-800 text-slate-300 overflow-x-auto leading-relaxed">
+                      {data.suggested_diff.split("\n").map((line, idx) => {
+                        const isAdded = line.startsWith("+");
+                        const isRemoved = line.startsWith("-");
+                        const isHeader = line.startsWith("@") || line.startsWith("---") || line.startsWith("+++");
+                        return (
+                          <div
+                            key={idx}
+                            className={`${
+                              isAdded
+                                ? "bg-emerald-950/40 text-emerald-300 font-semibold"
+                                : isRemoved
+                                ? "bg-rose-950/40 text-rose-300"
+                                : isHeader
+                                ? "text-cyan-400 font-bold"
+                                : "text-slate-400"
+                            } px-2 py-0.5 rounded`}
+                          >
+                            {line}
+                          </div>
+                        );
+                      })}
+                    </pre>
+                  ) : (
+                    <div className="p-8 text-center rounded-xl bg-[#121829] border border-slate-800 text-slate-400">
+                      <ShieldCheck className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                      No missing test patches required. Clean test coverage verified!
+                    </div>
+                  )
                 ) : (
-                  <div className="p-8 text-center rounded-xl bg-[#121829] border border-slate-800 text-slate-400">
-                    <ShieldCheck className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
-                    No missing test patches required. Clean test coverage verified!
+                  /* Downstream Callers Breakdown */
+                  <div className="space-y-3">
+                    <div className="text-[11px] text-slate-400">
+                      Downstream consumers invoking modified signatures without unit test coverage:
+                    </div>
+                    {data.blast_radius_nodes
+                      .filter((n) => n.change_type === "affected_caller")
+                      .map((caller) => (
+                        <div
+                          key={caller.id}
+                          className="p-3 rounded-xl bg-[#121829] border border-slate-800 space-y-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                              {caller.label}
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                              Hop {caller.hop_distance} Caller
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            File: {caller.file_path || "unknown"}
+                            {caller.line_range && ` : L${caller.line_range[0]}-L${caller.line_range[1]}`}
+                          </div>
+                          <div className="p-2 rounded-lg bg-[#0a0d16] border border-slate-800 text-[11px] text-slate-300 font-mono">
+                            Call-Site Warning: Modified signature in {selectedNode?.label || "target"} requires backward-compatibility review.
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>
@@ -1574,6 +1678,15 @@ export default function GitOSCommandCenter() {
                     ))}
                   </div>
                 )}
+                <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-mono">{rules.length} active constraints</span>
+                  <button
+                    onClick={() => setIsRuleModalOpen(true)}
+                    className="text-[10px] text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition"
+                  >
+                    <span>+ Configure Rules</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1664,32 +1777,74 @@ export default function GitOSCommandCenter() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              {activeModalPill.description}
-            </p>
-            <div className="p-3 rounded-xl bg-[#0b0e18] border border-slate-800 text-[11px] font-mono text-slate-400">
-              Zero-Spam Policy Active: This action executes directly under your verified GitHub OAuth identity with full audit trails.
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                onClick={() => setActiveModalPill(null)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setExecutionState("done");
-                  setTimeout(() => {
-                    setActiveModalPill(null);
-                    setExecutionState("idle");
-                  }, 1000);
-                }}
-                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition"
-              >
-                {executionState === "done" ? "Executed ✓" : "Confirm & Execute"}
-              </button>
-            </div>
+            {actionFeedback ? (
+              <div className="space-y-3">
+                <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/50 space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    Action Executed Successfully
+                  </div>
+                  <p className="text-xs text-slate-300">{actionFeedback.message}</p>
+                </div>
+                {actionFeedback.html_url && (
+                  <a
+                    href={actionFeedback.html_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-mono underline underline-offset-4"
+                  >
+                    <span>View Live on GitHub</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={() => {
+                      setActiveModalPill(null);
+                      setActionFeedback(null);
+                      setExecutionState("idle");
+                    }}
+                    className="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {activeModalPill.description}
+                </p>
+                <div className="p-3 rounded-xl bg-[#0b0e18] border border-slate-800 text-[11px] font-mono text-slate-400">
+                  Zero-Spam Policy Active: This action executes directly under your verified GitHub OAuth identity with full audit trails.
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => {
+                      setActiveModalPill(null);
+                      setExecutionState("idle");
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleExecuteAction}
+                    disabled={executionState === "executing"}
+                    className="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {executionState === "executing" ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sending to GitHub...</span>
+                      </>
+                    ) : (
+                      <span>Confirm & Execute</span>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1751,6 +1906,112 @@ export default function GitOSCommandCenter() {
                 </div>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Maintainer Rule Builder Modal */}
+      {isRuleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="max-w-lg w-full p-5 rounded-2xl bg-[#0f1422] border border-slate-700 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400" />
+                Maintainer Architectural Rule Builder
+              </h3>
+              <button
+                onClick={() => setIsRuleModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">
+              Declare custom boundary constraints enforced during zero-token graph pre-filtering.
+            </p>
+
+            {/* Existing Active Rules */}
+            <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+              {rules.map((rule) => (
+                <div key={rule.rule_id} className="p-2.5 rounded-xl bg-[#121829] border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-xs font-bold text-white">
+                    <span>{rule.name}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/30 uppercase font-mono">
+                      {rule.severity}
+                    </span>
+                  </div>
+                  <div className="text-[10px] font-mono text-cyan-400">{rule.pattern}</div>
+                  <div className="text-[11px] text-slate-400">{rule.description}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Create New Rule Form */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newRuleName || !newRulePattern) return;
+                const newRule = {
+                  rule_id: `RULE_${Date.now()}`,
+                  name: newRuleName,
+                  pattern: newRulePattern,
+                  severity: "high",
+                  description: newRuleDesc || "Custom maintainer boundary rule",
+                };
+                try {
+                  const res = await fetch(`${API_BASE_URL}/api/rules`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(newRule),
+                  });
+                  if (res.ok) {
+                    setRules((prev) => [...prev, newRule]);
+                    setNewRuleName("");
+                    setNewRulePattern("");
+                    setNewRuleDesc("");
+                  }
+                } catch {}
+              }}
+              className="pt-2 border-t border-slate-800 space-y-2"
+            >
+              <div className="text-[11px] font-semibold text-slate-300">Add New Constraint</div>
+              <input
+                type="text"
+                placeholder="Rule Name (e.g. No Direct DB Calls)"
+                value={newRuleName}
+                onChange={(e) => setNewRuleName(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg bg-[#0b0e18] border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+              <input
+                type="text"
+                placeholder="Pattern (e.g. frontend/* -> backend/db/*)"
+                value={newRulePattern}
+                onChange={(e) => setNewRulePattern(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg bg-[#0b0e18] border border-slate-800 text-xs font-mono text-cyan-300 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+              <input
+                type="text"
+                placeholder="Description"
+                value={newRuleDesc}
+                onChange={(e) => setNewRuleDesc(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg bg-[#0b0e18] border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsRuleModalOpen(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition"
+                >
+                  Save Constraint
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

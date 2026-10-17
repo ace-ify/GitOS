@@ -80,6 +80,32 @@ class GitHubClient:
                 self._etag_cache[url] = (etag, data)
             return data
 
+    async def get_issue_metadata(
+        self, owner: str, repo: str, issue_id: str, token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Fetches issue metadata (title, body, state, labels) for Issue-to-Code pathfinding."""
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/{issue_id}"
+        cached_etag = self._etag_cache.get(url, (None, None))[0]
+        headers = self._get_headers(token, etag=cached_etag)
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            self._update_rate_limits(resp.headers)
+
+            if resp.status_code == 304:
+                return self._etag_cache[url][1]
+
+            if resp.status_code == 403 or resp.status_code == 429:
+                logger.warning("GitHub rate limit hit on issue metadata.")
+                raise httpx.HTTPStatusError("GitHub API rate limit exceeded.", request=resp.request, response=resp)
+
+            resp.raise_for_status()
+            data = resp.json()
+            etag = resp.headers.get("etag")
+            if etag:
+                self._etag_cache[url] = (etag, data)
+            return data
+
     async def get_pull_request_files(
         self, owner: str, repo: str, pull_id: str, token: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -133,6 +159,98 @@ class GitHubClient:
         except Exception as e:
             logger.warning("Error fetching raw content from %s: %s", raw_url, e)
         return None
+
+    async def fetch_repo_file_by_path(
+        self, owner: str, repo: str, file_path: str, ref: str = "main", token: Optional[str] = None
+    ) -> Optional[str]:
+        """Fetches raw text of any file in the repository at a given ref/branch."""
+        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{file_path}"
+        return await self.fetch_file_raw_content(raw_url, token=token)
+
+    async def search_code_references(
+        self, owner: str, repo: str, symbol_name: str, token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Uses GitHub Code Search API to locate repo-wide references to a modified symbol.
+        Discovers true callers without cloning the repository to disk.
+        """
+        url = f"{self.base_url}/search/code?q={symbol_name}+repo:{owner}/{repo}&per_page=10"
+        headers = self._get_headers(token)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+                self._update_rate_limits(resp.headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("items", [])
+                elif resp.status_code == 403 or resp.status_code == 429:
+                    logger.warning("GitHub code search rate-limited or forbidden for %s", symbol_name)
+        except Exception as e:
+            logger.warning("Error searching code references for '%s': %s", symbol_name, e)
+        return []
+
+    async def post_pr_comment(
+        self, owner: str, repo: str, pr_id: str, body: str, token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Posts a verified triage markdown comment to a PR using the user's OAuth token.
+        Zero-Spam: Only invoked on explicit user confirmation.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/{pr_id}/comments"
+        headers = self._get_headers(token)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json={"body": body})
+            self._update_rate_limits(resp.headers)
+            if resp.status_code not in (200, 201):
+                logger.error("Failed to post comment to PR #%s: %s %s", pr_id, resp.status_code, resp.text)
+                raise httpx.HTTPStatusError(f"GitHub comment failed ({resp.status_code})", request=resp.request, response=resp)
+            data = resp.json()
+            return {
+                "id": data.get("id"),
+                "html_url": data.get("html_url"),
+                "created_at": data.get("created_at"),
+            }
+
+    async def close_pull_request(
+        self, owner: str, repo: str, pr_id: str, token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Closes a pull request on GitHub via user OAuth token.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/pulls/{pr_id}"
+        headers = self._get_headers(token)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.patch(url, headers=headers, json={"state": "closed"})
+            self._update_rate_limits(resp.headers)
+            if resp.status_code != 200:
+                logger.error("Failed to close PR #%s: %s %s", pr_id, resp.status_code, resp.text)
+                raise httpx.HTTPStatusError(f"GitHub close PR failed ({resp.status_code})", request=resp.request, response=resp)
+            data = resp.json()
+            return {
+                "id": data.get("id"),
+                "state": data.get("state"),
+                "html_url": data.get("html_url"),
+            }
+
+    async def add_issue_labels(
+        self, owner: str, repo: str, pr_id: str, labels: List[str], token: Optional[str] = None
+    ) -> List[str]:
+        """
+        Applies labels to a pull request/issue.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/{pr_id}/labels"
+        headers = self._get_headers(token)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json={"labels": labels})
+            self._update_rate_limits(resp.headers)
+            if resp.status_code not in (200, 201):
+                logger.error("Failed to add labels to PR #%s: %s", pr_id, resp.text)
+                return []
+            return [l.get("name") for l in resp.json()]
 
 
 # Global GitHub client singleton
