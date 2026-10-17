@@ -24,7 +24,18 @@ import {
   MessageSquare,
   Send,
   Bot,
+  User,
+  LogOut,
+  UserCheck,
 } from "lucide-react";
+
+// Authenticated user profile
+interface AuthUser {
+  login: string;
+  name: string;
+  avatar_url: string;
+  html_url?: string;
+}
 
 // Types matching shared_contract.json
 interface ParsedUrl {
@@ -245,6 +256,10 @@ export default function GitOSDashboard() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isGeneratingTest, setIsGeneratingTest] = useState(false);
 
+  // User Authentication State
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
   // Rule Builder Modal State
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [rules, setRules] = useState<MaintainerRule[]>([]);
@@ -264,7 +279,7 @@ export default function GitOSDashboard() {
     else setDetectedType("unknown");
   }, [urlInput]);
 
-  // Fetch health & existing rules
+  // Fetch health, rules, & user session
   useEffect(() => {
     const fetchHealthAndRules = async () => {
       try {
@@ -280,6 +295,15 @@ export default function GitOSDashboard() {
           const rData = await rRes.json();
           setRules(rData.rules || []);
         }
+        // Check current session
+        const uRes = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: "include" });
+        if (uRes.ok) {
+          const uData = await uRes.json();
+          if (uData.authenticated && uData.user) {
+            setCurrentUser(uData.user);
+            if (uData.role) setUserMode(uData.role);
+          }
+        }
       } catch {
         // Backend offline fallback
       }
@@ -287,14 +311,85 @@ export default function GitOSDashboard() {
     fetchHealthAndRules();
   }, []);
 
-  // Execute Analysis via API
+  // GitHub Login Handler
+  const handleLoginGithub = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/github/login`);
+      const d = await res.json();
+      if (d.oauth_configured && d.auth_url) {
+        window.location.href = d.auth_url;
+      } else {
+        setIsAuthModalOpen(true);
+      }
+    } catch {
+      setIsAuthModalOpen(true);
+    }
+  };
+
+  // Developer Sandbox Mock Login
+  const handleMockLogin = async (role: "maintainer" | "contributor") => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/mock-login?role=${role}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setCurrentUser(d.user);
+        setUserMode(role);
+        setIsAuthModalOpen(false);
+      }
+    } catch {
+      setCurrentUser({
+        login: role === "maintainer" ? "octocat-maintainer" : "contributor-alex",
+        name: role === "maintainer" ? "Octocat Maintainer" : "Alex Contributor",
+        avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4",
+      });
+      setUserMode(role);
+      setIsAuthModalOpen(false);
+    }
+  };
+
+  // Logout Handler
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {}
+    setCurrentUser(null);
+    setUserMode("contributor");
+  };
+
+  // Execute Analysis via API with dynamic repo role detection
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsAnalyzing(true);
+
+    // Auto-detect role on target repository if logged in
+    if (currentUser) {
+      const m = urlInput.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+      if (m) {
+        const o = m[1];
+        const r = m[2].replace(/\.git$/, "").split("/")[0];
+        try {
+          const pRes = await fetch(`${API_BASE_URL}/api/auth/check-permission?owner=${o}&repo=${r}`, {
+            credentials: "include",
+          });
+          if (pRes.ok) {
+            const pData = await pRes.json();
+            if (pData.role) setUserMode(pData.role);
+          }
+        } catch {}
+      }
+    }
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ url: urlInput, user_mode: userMode }),
       });
       if (res.ok) {
@@ -601,6 +696,40 @@ export default function GitOSDashboard() {
               🚀 Contributor
             </button>
           </div>
+
+          {/* GitHub OAuth Status & Profile */}
+          {currentUser ? (
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+              <img
+                src={currentUser.avatar_url}
+                alt={currentUser.login}
+                className="w-7 h-7 rounded-full border border-cyan-500/50"
+              />
+              <div className="hidden lg:block text-left">
+                <div className="text-xs font-semibold text-white leading-tight">
+                  @{currentUser.login}
+                </div>
+                <div className="text-[10px] text-cyan-400 capitalize">
+                  {userMode}
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                title="Disconnect Account"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleLoginGithub}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 flex items-center gap-1.5 transition shadow-sm"
+            >
+              <User className="w-3.5 h-3.5 text-cyan-400" />
+              Connect GitHub
+            </button>
+          )}
         </div>
       </header>
 
@@ -978,6 +1107,50 @@ export default function GitOSDashboard() {
                   <>Confirm & Dispatch</>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Developer Sandbox Auth Modal */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass-panel-elevated max-w-md w-full rounded-2xl p-6 space-y-4 border border-cyan-500/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">GitHub OAuth Sandbox</h3>
+              </div>
+              <button onClick={() => setIsAuthModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              No live GitHub OAuth App credentials detected in <code className="text-cyan-300">.env</code>.
+              Select a persona below to simulate permission auto-routing:
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <button
+                onClick={() => handleMockLogin("maintainer")}
+                className="p-3 bg-[#151c30] hover:bg-cyan-950/40 border border-slate-700 hover:border-cyan-500/50 rounded-xl text-left transition group"
+              >
+                <div className="text-xs font-bold text-white group-hover:text-cyan-400">🛡️ Maintainer Persona</div>
+                <div className="text-[10px] text-slate-400 mt-1">Admin / Write scopes. Triage & Slop Defense active.</div>
+              </button>
+
+              <button
+                onClick={() => handleMockLogin("contributor")}
+                className="p-3 bg-[#151c30] hover:bg-cyan-950/40 border border-slate-700 hover:border-cyan-500/50 rounded-xl text-left transition group"
+              >
+                <div className="text-xs font-bold text-white group-hover:text-cyan-400">🚀 Contributor Persona</div>
+                <div className="text-[10px] text-slate-400 mt-1">Read / PR Author scopes. Pre-flight checks active.</div>
+              </button>
+            </div>
+
+            <div className="text-[11px] text-slate-500 text-center pt-2">
+              To configure live OAuth, set <code className="text-cyan-400">GITHUB_CLIENT_ID</code> in .env
             </div>
           </div>
         </div>

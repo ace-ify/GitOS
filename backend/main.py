@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from backend.polyglot import extract_universal_ast, stitch_cross_file_graph, detect_language
 from backend.github_client import get_github_client
 from backend.compressor import get_groq_reasoner
+from backend.auth import auth_router, get_session
 
 try:
     from graph.client import get_graph_client
@@ -61,6 +62,9 @@ except Exception as e:
 
 github_client = get_github_client()
 groq_reasoner = get_groq_reasoner()
+
+# Mount OAuth & authentication endpoints
+app.include_router(auth_router)
 
 
 # ==============================================================================
@@ -290,6 +294,7 @@ async def create_maintainer_rule(rule: MaintainerRuleCreate):
 @app.post("/api/analyze")
 async def analyze_url(
     req: AnalyzeRequest,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """
@@ -302,10 +307,14 @@ async def analyze_url(
     repo = parsed_url["repo"]
     repo_id = f"{owner}/{repo}"
 
-    # Extract token from request body or Authorization header (Bearer)
+    # Extract token from request body, Authorization header (Bearer), or HttpOnly session cookie
     token = req.github_token
     if not token and authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
+    if not token:
+        session = get_session(request.cookies.get("gitos_session"))
+        if session:
+            token = session.get("token")
 
     live_fetched = False
     commit_sha = f"sha_{uuid.uuid4().hex[:10]}"
@@ -503,6 +512,7 @@ async def chat_telemetry(req: ChatQueryRequest):
 @app.post("/api/execute-action")
 async def execute_action(
     req: ExecuteActionRequest,
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """
@@ -519,7 +529,10 @@ async def execute_action(
     token = req.oauth_token
     if not token and authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
-
+    if not token:
+        session = get_session(request.cookies.get("gitos_session"))
+        if session:
+            token = session.get("token")
     if not token:
         token = os.getenv("GITHUB_TOKEN")
 
