@@ -54,6 +54,8 @@ from backend.polyglot import (
     detect_language,
     parse_patch_modified_lines,
     is_node_modified_by_patch,
+    extract_patch_new_imports,
+    audit_dependency_risks,
 )
 from backend.github_client import get_github_client, EXCLUDED_EXTENSIONS
 from backend.compressor import get_groq_reasoner
@@ -170,7 +172,159 @@ def parse_github_url(url: str) -> Dict[str, Any]:
 
 
 # ==============================================================================
-# 2. 4-Layer Deterministic Slop & Quality Filters (0 LLM Tokens)
+# 2. Mermaid Diagram & Sticky Comment Generators
+# ==============================================================================
+
+def generate_mermaid_blast_radius(
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    max_nodes: int = 15,
+) -> str:
+    """
+    Compiles a blast-radius subgraph into clean, GitHub-compatible Mermaid TD syntax
+    with color-coded CSS classes for Modified (red), Untested (amber), and Tested (green) nodes.
+    """
+    if not nodes:
+        return "*No modified symbols detected in blast radius.*"
+
+    mermaid_lines = [
+        "```mermaid",
+        "graph TD",
+        "    classDef modified fill:#f85149,stroke:#ff7b72,stroke-width:2px,color:#fff;",
+        "    classDef untested fill:#d29922,stroke:#f0883e,stroke-width:2px,color:#fff;",
+        "    classDef tested fill:#238636,stroke:#3fb950,stroke-width:2px,color:#fff;",
+        "    classDef standard fill:#21262d,stroke:#30363d,stroke-width:1px,color:#c9d1d9;",
+    ]
+
+    node_id_map: Dict[str, str] = {}
+    selected_nodes = nodes[:max_nodes]
+
+    for idx, node in enumerate(selected_nodes):
+        nid = f"N{idx}"
+        orig_id = node.get("id") or str(idx)
+        node_id_map[orig_id] = nid
+
+        raw_label = node.get("label") or orig_id.split("::")[-1]
+        clean_label = raw_label.replace('"', "'").replace("\n", " ").strip()
+        if len(clean_label) > 28:
+            clean_label = clean_label[:25] + "..."
+
+        status = node.get("status", "")
+        ntype = node.get("type", "")
+        is_test = ntype == "test" or "test" in orig_id.lower()
+
+        if status == "modified":
+            css_class = "modified"
+        elif is_test:
+            css_class = "tested"
+        elif status == "untested" or node.get("untested"):
+            css_class = "untested"
+        else:
+            css_class = "standard"
+
+        mermaid_lines.append(f'    {nid}["{clean_label}"]:::{css_class}')
+
+    edge_count = 0
+    if edges:
+        for edge in edges:
+            src = edge.get("source")
+            tgt = edge.get("target")
+            if src in node_id_map and tgt in node_id_map:
+                src_id = node_id_map[src]
+                tgt_id = node_id_map[tgt]
+                etype = edge.get("type", "")
+                if etype == "CALLS":
+                    mermaid_lines.append(f"    {src_id} -->|calls| {tgt_id}")
+                elif etype == "TESTED_BY":
+                    mermaid_lines.append(f"    {src_id} -.->|tested by| {tgt_id}")
+                else:
+                    mermaid_lines.append(f"    {src_id} --> {tgt_id}")
+                edge_count += 1
+                if edge_count >= max_nodes + 6:
+                    break
+
+    mermaid_lines.append("```")
+    return "\n".join(mermaid_lines)
+
+
+def build_sticky_comment_body(
+    payload: Dict[str, Any], owner: str, repo: str, pr_id: str
+) -> str:
+    """
+    Builds a high-signal, zero-spam sticky PR comment with:
+    1. Invisible sticky marker
+    2. Telemetry risk table
+    3. Inline Mermaid blast radius DAG
+    4. Collapsible technical details (<details>)
+    5. Clean footer
+    """
+    verdict = payload.get("verdict", "NEEDS_TESTS")
+    risk_score = payload.get("risk_score", 0)
+    summary = payload.get("summary", "Automated AST multi-hop blast telemetry report.")
+    nodes = payload.get("nodes", [])
+    edges = payload.get("edges", [])
+    untested_callers = payload.get("untested_callers", [])
+    slopsquatting_alerts = payload.get("slopsquatting_alerts", [])
+
+    if risk_score > 70:
+        badge = "🔴 Critical Risk"
+    elif risk_score > 30:
+        badge = "🟡 Moderate Risk"
+    else:
+        badge = "🟢 Low Risk"
+
+    mermaid_diagram = generate_mermaid_blast_radius(nodes, edges)
+
+    # Build caller details
+    if untested_callers:
+        caller_items = "\n".join([f"- `{c}`" for c in untested_callers[:10]])
+    else:
+        caller_items = "- None detected (All modified functions have test coverage or no callers)"
+
+    # Build dependency alerts
+    if slopsquatting_alerts:
+        dep_items = "\n".join([f"- ⚠️ **{alert.get('package')}**: {alert.get('message')}" for alert in slopsquatting_alerts])
+    else:
+        dep_items = "- ✅ No suspicious or hallucinated dependencies detected."
+
+    comment = f"""<!-- gitos-sticky-intelligence -->
+## 🛡️ GitOS Blast Radius Intelligence
+
+| Metric | Result | Status |
+|---|---|---|
+| **Verdict** | `{verdict}` | {badge} |
+| **Risk Score** | **{risk_score} / 100** | {badge} |
+| **Target PR** | `#{pr_id}` | `{owner}/{repo}` |
+| **Filter 1 (Untested Callers)** | {len(untested_callers)} Callers | {"⚠️ Action Required" if untested_callers else "✅ Clear"} |
+| **Filter 5 (Dependency Sentinel)** | {len(slopsquatting_alerts)} Flagged | {"🚨 Potential Slop/Supply Risk" if slopsquatting_alerts else "✅ Verified"} |
+
+{summary}
+
+### 💥 Blast Radius Visual Map
+{mermaid_diagram}
+
+<details>
+<summary><b>🔍 View Impacted Untested Callers ({len(untested_callers)})</b></summary>
+
+{caller_items}
+
+**Maintainer Note:** Callers above invoke modified functions but were not updated in this PR's diff.
+</details>
+
+<details>
+<summary><b>📦 Dependency & Slopsquatting Audit</b></summary>
+
+{dep_items}
+</details>
+
+---
+*Verified & updated in-place via [GitOS](https://github.com/ace-ify/GitOS) • Zero-Disk In-Memory Graph • Zero-Spam Sticky Protocol*
+"""
+    return comment
+
+
+# ==============================================================================
+# 2. 5-Layer Deterministic Slop & Quality Filters (0 LLM Tokens)
 # ==============================================================================
 
 def run_deterministic_filters(
@@ -182,9 +336,15 @@ def run_deterministic_filters(
     ast_delta: int,
     text_diff_lines: int,
     file_paths: List[str],
+    dependency_alerts: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Executes the 4 hard graph filters without spending LLM tokens.
+    Executes the 5 hard graph filters without spending LLM tokens:
+    1. Untested Callers
+    2. AST vs Text Ratio (Cosmetic Slop)
+    3. Dead Code Injection
+    4. Maintainer Architectural Rules
+    5. Slopsquatting & Hallucinated Dependency Sentinel
     """
     if graph_client:
         untested_check = graph_client.check_untested_callers(
@@ -218,6 +378,10 @@ def run_deterministic_filters(
     ratio = (ast_delta / max(text_diff_lines, 1))
     is_cosmetic_slop = text_diff_lines > 25 and ratio < 0.15
 
+    # Filter 5: Slopsquatting & Hallucinated Dependency Sentinel
+    dep_alerts = dependency_alerts or []
+    has_critical_dep_alerts = any(a.get("severity") == "CRITICAL" for a in dep_alerts)
+
     # Compute Composite Risk Score (0 - 100)
     risk_score = 10
     if untested_check["flagged"]:
@@ -228,10 +392,16 @@ def run_deterministic_filters(
         risk_score += 30
     if len(violations) > 0:
         risk_score += 50
+    if has_critical_dep_alerts:
+        risk_score += 60
+    elif len(dep_alerts) > 0:
+        risk_score += 20
     risk_score = min(risk_score, 100)
 
     # Determine Verdict
-    if len(violations) > 0:
+    if has_critical_dep_alerts:
+        verdict = "SLOPSQUATTING_ALERT"
+    elif len(violations) > 0:
         verdict = "RULE_VIOLATION"
     elif is_cosmetic_slop:
         verdict = "AI_SLOP_SUSPECTED"
@@ -264,8 +434,14 @@ def run_deterministic_filters(
                 "flagged": len(violations) > 0,
                 "violations": violations,
             },
+            "slopsquatting_sentinel": {
+                "flagged": len(dep_alerts) > 0,
+                "critical_alert": has_critical_dep_alerts,
+                "alerts": dep_alerts,
+            },
         },
     }
+
 
 
 # ==============================================================================
@@ -335,6 +511,8 @@ async def analyze_url(
     ast_delta = 30
     suggested_diff: Optional[str] = None
     file_paths: List[str] = []
+    new_imported_pkgs: Set[str] = set()
+    dependency_alerts: List[Dict[str, Any]] = []
 
     # 1. Attempt Live GitHub API Extraction
     if parsed_url["url_type"] == "pull" and parsed_url["target_id"]:
@@ -350,6 +528,11 @@ async def analyze_url(
                 file_paths.append(filename)
                 patch = file_info.get("patch", "")
                 text_diff_lines += file_info.get("changes", 0)
+
+                # Extract newly added imports from patch
+                flang = detect_language(filename)
+                for p in extract_patch_new_imports(patch, language=flang):
+                    new_imported_pkgs.add(p)
 
                 # Parse exact line numbers modified in the diff hunks
                 modified_lines = parse_patch_modified_lines(patch)
@@ -373,6 +556,22 @@ async def analyze_url(
 
             if pr_files and pr_files[0].get("patch"):
                 suggested_diff = pr_files[0].get("patch")
+
+            # Filter 5: Audit newly introduced dependencies against repo manifest & public registries
+            manifest_text = None
+            if any(f.endswith(".py") for f in file_paths):
+                manifest_text = await github_client.fetch_repo_file_by_path(owner, repo, "requirements.txt", token=token)
+            elif any(f.endswith(".ts") or f.endswith(".js") for f in file_paths):
+                manifest_text = await github_client.fetch_repo_file_by_path(owner, repo, "package.json", token=token)
+
+            ecosystem = "npm" if any(f.endswith(".ts") or f.endswith(".js") for f in file_paths) else "pypi"
+            dependency_alerts = await audit_dependency_risks(
+                list(new_imported_pkgs),
+                manifest_text=manifest_text,
+                ecosystem=ecosystem,
+            )
+            if dependency_alerts:
+                logger.info("Filter 5 Slopsquatting Sentinel flagged %s package alerts", len(dependency_alerts))
 
             # Real Repo-Wide Caller Discovery (Zero-Disk Multi-Hop Blast Discovery)
             # Query GitHub code search for callers of modified functions across other repo files
@@ -440,6 +639,53 @@ async def analyze_url(
             logger.warning("Could not complete live Issue fetch (%s): Falling back.", e)
             live_fetched = False
 
+    # 1c. Live Repository Ingestion (Zero-Disk In-Memory Tree Processing)
+    elif parsed_url["url_type"] in ("repo", "blob"):
+        try:
+            repo_meta = await github_client.get_repository_metadata(owner, repo, token=token)
+            default_branch = repo_meta.get("default_branch", "main")
+            logger.info("Live fetched repository %s/%s (default branch: %s)", owner, repo, default_branch)
+
+            if parsed_url["url_type"] == "blob" and parsed_url.get("path"):
+                # Scoped single file extraction
+                blob_path = parsed_url["path"]
+                content = await github_client.fetch_repo_file_by_path(
+                    owner, repo, blob_path, ref=parsed_url.get("ref", default_branch), token=token
+                )
+                if content:
+                    ast_res = extract_universal_ast(content, blob_path)
+                    parsed_project_files[blob_path] = ast_res
+                    file_paths.append(blob_path)
+                    for n in ast_res.get("nodes", []):
+                        if n.get("type") == "function":
+                            modified_functions.append(n["id"])
+                    live_fetched = True
+            else:
+                # Top-level repository: fetch tree and stream prioritized source files into RAM
+                tree_files = await github_client.get_repository_tree(owner, repo, branch=default_branch, token=token)
+                logger.info("Found %s code files in %s/%s tree", len(tree_files), owner, repo)
+
+                # Prioritize root entrypoints, core services, and tests
+                for item in tree_files[:12]:
+                    f_path = item.get("path", "")
+                    content = await github_client.fetch_repo_file_by_path(
+                        owner, repo, f_path, ref=default_branch, token=token
+                    )
+                    if content:
+                        ast_res = extract_universal_ast(content, f_path)
+                        parsed_project_files[f_path] = ast_res
+                        file_paths.append(f_path)
+                        for node in ast_res.get("nodes", []):
+                            if node["type"] == "test":
+                                modified_tests.append(node["id"])
+                            elif node["type"] == "function" and len(modified_functions) < 3:
+                                modified_functions.append(node["id"])
+                live_fetched = len(parsed_project_files) > 0
+
+        except Exception as e:
+            logger.warning("Could not complete live Repository tree fetch (%s). Falling back.", e)
+            live_fetched = False
+
     # 2. Fallback Sandbox / Synthetic In-Memory Graph if Live Fetch did not populate
     if not parsed_project_files:
         demo_code_py = """
@@ -485,7 +731,7 @@ export class GatewayController {
     else:
         blast = {"nodes": all_nodes, "edges": stitched_edges}
 
-    # 5. Run the 4 Deterministic Pre-Filters
+    # 5. Run the 5 Deterministic Pre-Filters (0 LLM Tokens)
     filter_results = run_deterministic_filters(
         repo_id=repo_id,
         commit_sha=commit_sha,
@@ -495,6 +741,7 @@ export class GatewayController {
         ast_delta=ast_delta,
         text_diff_lines=text_diff_lines,
         file_paths=file_paths,
+        dependency_alerts=dependency_alerts,
     )
 
     # Action Pills
@@ -504,8 +751,16 @@ export class GatewayController {
             "label": "Request Test Coverage",
             "action_type": "gh_comment",
             "is_destructive": False,
-            "description": f"Post blast radius telemetry report detailing {len(modified_functions)} affected callers to the PR.",
-            "payload": {"template": "untested_call_impact"},
+            "description": f"Post sticky blast radius telemetry report detailing {len(modified_functions)} affected callers to the PR.",
+            "payload": {
+                "template": "untested_call_impact",
+                "verdict": filter_results["verdict"],
+                "risk_score": filter_results["risk_score"],
+                "nodes": blast.get("nodes", all_nodes),
+                "edges": blast.get("edges", stitched_edges),
+                "untested_callers": modified_functions,
+                "slopsquatting_alerts": dependency_alerts,
+            },
         },
         {
             "id": "pill_generate_test_patch",
@@ -517,13 +772,30 @@ export class GatewayController {
         },
     ]
 
-    if filter_results["verdict"] == "AI_SLOP_SUSPECTED":
+    if any(a.get("severity") == "CRITICAL" for a in dependency_alerts):
+        action_pills.append({
+            "id": "pill_flag_dependency",
+            "label": "Flag Hallucinated Dependency",
+            "action_type": "gh_comment",
+            "is_destructive": False,
+            "description": "Post sticky warning about non-existent or typo-squatted package imports.",
+            "payload": {
+                "verdict": "SLOPSQUATTING_ALERT",
+                "risk_score": filter_results["risk_score"],
+                "nodes": blast.get("nodes", all_nodes),
+                "edges": blast.get("edges", stitched_edges),
+                "slopsquatting_alerts": dependency_alerts,
+                "untested_callers": modified_functions,
+            },
+        })
+
+    if filter_results["verdict"] in ("AI_SLOP_SUSPECTED", "SLOPSQUATTING_ALERT"):
         action_pills.append({
             "id": "pill_close_slop",
             "label": "Close Slop PR",
             "action_type": "gh_close",
             "is_destructive": True,
-            "description": "Close PR citing the cosmetic AST ratio check.",
+            "description": "Close PR citing the automated graph and dependency check.",
             "payload": {},
         })
 
@@ -545,10 +817,37 @@ export class GatewayController {
             "outgoing_calls": 1,
         })
 
+    # Dynamic User Mode Detection:
+    # If authenticated, determine role automatically from repo ownership or permissions.
+    # If not authenticated, default to contributor for public PRs/issues and maintainer for repo audits.
+    effective_user_mode = "contributor"
+    if token:
+        try:
+            user_prof = await github_client.fetch_file_raw_content("https://api.github.com/user", token=token)
+            if user_prof:
+                import json as _json
+                u_data = _json.loads(user_prof)
+                username = u_data.get("login", "")
+                if username.lower() == owner.lower():
+                    effective_user_mode = "maintainer"
+                else:
+                    role_status = await github_client.fetch_file_raw_content(
+                        f"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}/permission",
+                        token=token,
+                    )
+                    if role_status:
+                        p_data = _json.loads(role_status)
+                        if p_data.get("permission") in ("admin", "write"):
+                            effective_user_mode = "maintainer"
+        except Exception:
+            effective_user_mode = "maintainer" if req.user_mode == "maintainer" else "contributor"
+    else:
+        effective_user_mode = "maintainer" if parsed_url["url_type"] == "repo" else "contributor"
+
     response_payload = {
         "analysis_id": str(uuid.uuid4()),
         "url_parsed": parsed_url,
-        "user_mode": req.user_mode or "maintainer",
+        "user_mode": effective_user_mode,
         "risk_score": filter_results["risk_score"],
         "verdict": filter_results["verdict"],
         "summary": "",
@@ -617,26 +916,23 @@ async def execute_action(
     if req.action_type == "gh_comment":
         comment_body = req.payload.get("body")
         if not comment_body:
-            comment_body = f"""### 🛡️ GitOS Blast Radius Triage Report
-**Verdict:** `{req.payload.get('verdict', 'NEEDS_TESTS')}` | **Risk Score:** `{req.payload.get('risk_score', 82)}/100`
-
-{req.payload.get('summary', 'Automated AST multi-hop blast telemetry report.')}
-
-#### 💥 Multi-Hop Blast Radius Telemetry
-- **Target Repository:** `{req.owner}/{req.repo}`
-- **Target PR:** `#{req.target_id}`
-- **Zero-Token Pre-Filters:** Evaluated without token burn.
-
-*Zero-Spam Policy: Executed with explicit maintainer consent via [GitOS](https://github.com/ace-ify/GitOS).*
-"""
+            comment_body = build_sticky_comment_body(
+                payload=req.payload,
+                owner=req.owner,
+                repo=req.repo,
+                pr_id=str(req.target_id),
+            )
         try:
-            comment_res = await github_client.post_pr_comment(req.owner, req.repo, str(req.target_id), comment_body, token=token)
+            comment_res = await github_client.upsert_sticky_pr_comment(
+                req.owner, req.repo, str(req.target_id), comment_body, token=token
+            )
+            action_verb = "updated" if comment_res.get("action") == "updated" else "posted"
             return {
                 "status": "success",
                 "action_type": "gh_comment",
                 "html_url": comment_res.get("html_url"),
                 "target": f"{req.owner}/{req.repo}#{req.target_id}",
-                "message": f"Triage report successfully posted to GitHub: {comment_res.get('html_url')}",
+                "message": f"Sticky triage report successfully {action_verb} on GitHub: {comment_res.get('html_url')}",
             }
         except Exception as e:
             logger.warning("Live comment posting failed (%s). Returning sandbox simulation.", e)
@@ -713,6 +1009,124 @@ async def execute_action(
     }
 
 
+# ==============================================================================
+# 5. Model Context Protocol (MCP) Tool Endpoints
+# Exposes Blast Radius & Slop Checks for Cursor, Claude Code, and Antigravity
+# ==============================================================================
+
+class MCPBlastRadiusRequest(BaseModel):
+    patch: str = Field(..., description="Unified diff patch of local changes")
+    language: Optional[str] = Field("python", description="Language: 'python', 'javascript', 'typescript', etc.")
+    file_path: Optional[str] = Field(None, description="Path of modified file")
+
+
+class MCPSlopCheckRequest(BaseModel):
+    patch: str = Field(..., description="Unified diff patch of changes")
+    language: Optional[str] = Field("python", description="Programming language")
+    manifest_text: Optional[str] = Field(None, description="Contents of requirements.txt or package.json")
+
+
+@app.get("/mcp/tools")
+async def list_mcp_tools():
+    """Returns available GitOS MCP tool definitions for IDE agents."""
+    return {
+        "tools": [
+            {
+                "name": "gitos_blast_radius",
+                "description": "Calculate function-level blast radius and untested callers for a code diff before committing.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "patch": {"type": "string", "description": "Unified diff patch string"},
+                        "language": {"type": "string", "enum": ["python", "javascript", "typescript", "go", "generic"]},
+                        "file_path": {"type": "string", "description": "Path of modified file"},
+                    },
+                    "required": ["patch"],
+                },
+            },
+            {
+                "name": "gitos_slop_check",
+                "description": "Evaluate code changes against 5 deterministic filters: untested callers, cosmetic slop, dead code, maintainer rules, and slopsquatting package hallucination.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "patch": {"type": "string", "description": "Unified diff patch"},
+                        "language": {"type": "string", "enum": ["python", "javascript", "typescript", "go", "generic"]},
+                        "manifest_text": {"type": "string", "description": "Optional contents of requirements.txt or package.json"},
+                    },
+                    "required": ["patch"],
+                },
+            },
+        ]
+    }
+
+
+@app.post("/mcp/blast-radius")
+async def mcp_blast_radius(req: MCPBlastRadiusRequest):
+    """MCP endpoint: Computes blast radius directly from a local patch."""
+    modified_lines = parse_patch_modified_lines(req.patch)
+    dummy_path = req.file_path or f"src/modified.{'py' if req.language == 'python' else 'ts'}"
+
+    text_lines = len(req.patch.splitlines())
+    ast_delta = len(modified_lines)
+    new_imports = extract_patch_new_imports(req.patch, language=req.language or "python")
+
+    return {
+        "status": "success",
+        "file_path": dummy_path,
+        "modified_lines": sorted(list(modified_lines)),
+        "ast_delta": ast_delta,
+        "text_diff_lines": text_lines,
+        "new_imports": new_imports,
+        "summary": f"Detected {len(modified_lines)} modified lines touching local symbols with {len(new_imports)} new external imports.",
+    }
+
+
+@app.post("/mcp/slop-check")
+async def mcp_slop_check(req: MCPSlopCheckRequest):
+    """MCP endpoint: Runs deterministic slop and slopsquatting audit."""
+    modified_lines = parse_patch_modified_lines(req.patch)
+    text_lines = len(req.patch.splitlines())
+    ast_delta = len(modified_lines)
+
+    ratio = ast_delta / max(text_lines, 1)
+    is_cosmetic_slop = text_lines > 25 and ratio < 0.15
+
+    new_imports = extract_patch_new_imports(req.patch, language=req.language or "python")
+    ecosystem = "pypi" if req.language == "python" else "npm"
+    dep_alerts = await audit_dependency_risks(new_imports, manifest_text=req.manifest_text, ecosystem=ecosystem)
+
+    risk_score = 10
+    if is_cosmetic_slop:
+        risk_score += 45
+    if any(a.get("severity") == "CRITICAL" for a in dep_alerts):
+        risk_score += 60
+    elif len(dep_alerts) > 0:
+        risk_score += 20
+    risk_score = min(risk_score, 100)
+
+    if any(a.get("severity") == "CRITICAL" for a in dep_alerts):
+        verdict = "SLOPSQUATTING_ALERT"
+    elif is_cosmetic_slop:
+        verdict = "AI_SLOP_SUSPECTED"
+    elif risk_score > 30:
+        verdict = "LOW_RISK"
+    else:
+        verdict = "CLEAN"
+
+    return {
+        "status": "success",
+        "verdict": verdict,
+        "risk_score": risk_score,
+        "filters": {
+            "cosmetic_slop": {"flagged": is_cosmetic_slop, "ratio": round(ratio, 2)},
+            "slopsquatting_sentinel": {"flagged": len(dep_alerts) > 0, "alerts": dep_alerts},
+        },
+        "recommendation": "All checks passed. Safe to commit." if risk_score < 40 else "Review flagged warnings before submitting PR.",
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

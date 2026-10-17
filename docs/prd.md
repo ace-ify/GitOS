@@ -1,172 +1,228 @@
 # 📑 GitOS: Product Requirements Document (PRD)
 
-**Document Version:** 1.0.0  
-**Status:** Approved for Implementation  
-**Target Release:** V1 Production Engine  
-**Author:** GitOS Engineering & Product Architecture  
+**Document Version:** 1.2.0 (Production-Grade Blueprint)  
+**Status:** Approved for Implementation & Release  
+**Target Release:** GitOS V1.2 Production Intelligence Engine  
+**Author:** GitOS Engineering & Product Management  
 
 ---
 
 ## 1. Executive Summary & Problem Space
 
-### 1.1 The Open-Source AI Crisis
-The proliferation of LLM-assisted coding tools has led to a dramatic asymmetric cost imbalance in open-source software maintenance:
-- **Generation is Free; Verification is Expensive:** Creating a 400-line pull request takes an LLM 10 seconds. Manually reviewing it, checking for architectural integrity, verifying missing tests, and confirming subtle parameter changes takes a human maintainer 45–90 minutes.
-- **The "AI Slop" Epidemic:** Repositories are inundated with syntactically valid but structurally toxic PRs: cosmetic comment rewrites, dead code injection, hallucinated utilities, and modifications to mission-critical functions with zero test updates.
-- **Contributor Blindness:** Legitimate contributors who want to fix an issue lack visibility into the repository's blast radius, inadvertently modifying functions that break 10–20 downstream callers across unmentioned files.
+### 1.1 The Open-Source AI Crisis & The Review Bottleneck
+The explosion of LLM-assisted coding agents (Cursor, GitHub Copilot, Claude Code) has fundamentally transformed the economics of software development:
+- **Asymmetric Cost Imbalance:** Writing 500 lines of syntactically clean code now takes an autonomous agent or junior developer 15 seconds. Verifying its architectural integrity, checking untested callers, validating dependency integrity, and ensuring downstream safety takes an expert human maintainer 45–90 minutes.
+- **The "AI Slop" Epidemic:** Repositories are swamped by low-effort AI pull requests: superficial docstring rewrites, dead utility injections, renamed variables, and breaking modifications to core business logic with zero corresponding test updates.
+- **Bot Fatigue & Alert Overload:** Existing commercial AI review bots (CodeRabbit, PR-Agent) attempt line-by-line diff commentary. They spam PR threads with 15–20 nitpicks on style, cluttering the discussion, generating out-of-date ghost comments on re-pushes, and failing to detect cross-file breaking changes.
+- **Supply Chain Vulnerability (Slopsquatting):** LLMs hallucinate non-existent package names or suggest typo-squatted dependencies, introducing serious supply-chain security risks directly into open-source pull requests.
+- **Contributor Blindness:** Well-intentioned contributors are hesitant to contribute because they lack visibility into the codebase's blast radius, frequently submitting PRs that inadvertently break remote downstream callers across unmentioned files.
 
 ### 1.2 GitOS Value Proposition
-GitOS is the **first graph-powered ecosystem defense and intelligence layer** for GitHub. By combining in-memory AST extraction, FalkorDB graph caching, and deterministic pre-filtering, GitOS delivers:
-- **Instant (sub-second) blast radius awareness.**
-- **90% deterministic triage without spending LLM tokens.**
-- **Zero-disk server operation (100% in-memory tree processing).**
-- **Zero unconsented bot spam via strictly verified user-initiated actions.**
+GitOS is the **Zero-Install, Zero-Disk, Zero-Spam Graph Intelligence & Defense Layer** for GitHub. By combining in-memory universal AST extraction, FalkorDB graph indexing, deterministic pre-filtering, and scoped OAuth actions, GitOS delivers:
+1. **Zero-Install Instant Onboarding:** Simply paste any GitHub URL into the omnibox—no invasive organization-level GitHub App installation required.
+2. **Sub-Second Blast Radius Intelligence:** Interactive visual graph and downstream caller analysis in < 500 ms.
+3. **85%+ Deterministic 0-Token Triage:** Filters out cosmetic slop, untested breaking callers, dead code, architectural violations, and hallucinated packages *without burning expensive LLM tokens*.
+4. **Zero PR Spam (Sticky Self-Updating Intelligence):** Never spams a PR with multiple comments. Edits a single pinned comment in-place with collapsible telemetry and native inline GitHub Mermaid diagrams.
+5. **Zero-Disk In-Memory Execution:** Streams file blobs directly into RAM without cloning repos to disk, satisfying strict enterprise security standards.
+6. **IDE-Native (MCP Protocol):** Integrates directly with Cursor, Claude Code, and Antigravity so developers can check blast radius before opening a PR.
 
 ---
 
-## 2. User Personas & Dual-Mode Scope
+## 2. Competitive Landscape & Gap Analysis
 
-GitOS dynamically personalizes the UI and functionality based on the user's verified GitHub OAuth scopes and repository permissions:
+| Capability / Metric | GitOS | CodeRabbit | Greptile | tng.sh | Socket.dev |
+|---|---|---|---|---|---|
+| **Primary Focus** | Blast Radius & Slop Defense | Conversational PR Review | Full-Codebase Indexing | Function Blast Radius | Dependency Security |
+| **Setup Friction** | **Zero (Paste URL in Omnibox)** | High (GitHub App Org Auth) | High (Full Repo Indexing) | Medium (CLI / GitHub Action) | Medium (GitHub App) |
+| **Token Cost per Scan** | **0 Tokens for 85%+ Scans** | 30k–80k tokens/PR | 50k–100k tokens/PR | 0 Tokens (Static analysis) | 0 Tokens (Database lookup) |
+| **PR Comment Style** | **1 Sticky Self-Updating Comment** | 10–25 Inline Comments (Spam) | Dense Text Reports | Single Comment | Security Alerts |
+| **Visual Graph in PR** | **Native Inline Mermaid Diagrams** | Separate SaaS Web App | None (Text only) | Mermaid Diagram | None |
+| **Slopsquatting Detection** | **Built-in (Filter 5 Registry Check)** | No | No | No | Yes (SaaS database) |
+| **Server Disk Footprint** | **0 Bytes (100% In-Memory RAM)** | Cloud Container Disk | Cloud Container Disk | Local / Action Disk | Cloud Server |
+| **IDE MCP Integration** | **Native MCP Server Endpoints** | IDE Extension | Webhook / API | CLI only | IDE Plugin |
+
+### Key Product Differentiator:
+Competitors force teams to choose between noisy, expensive LLM reviewers (CodeRabbit) or static security-only scanners (Socket). **GitOS bridges this divide** by using deterministic code graphs for instant structural safety while reserving compressed LLMs strictly for high-value triage synthesis.
+
+---
+
+## 3. User Personas & Autonomous Intent Architecture
+
+GitOS dynamically adjusts its UI and tooling based on verified GitHub permissions and the input URL. **There are no manual toggles or dropdowns.**
 
 ```
-                          ┌──────────────────────────┐
-                          │   GitHub OAuth Handshake  │
-                          └─────────────┬────────────┘
-                                        │
-                    ┌───────────────────┴───────────────────┐
-                    ▼                                       ▼
-        [admin / write scopes]                    [read / author scopes]
-       🛡️ Maintainer Mode                       🚀 Contributor Mode
-  • Slop Detection & Scoring (0-100)      • Pre-flight blast radius check
-  • Multi-hop breaking caller alert       • Missing test coverage alerts
-  • Custom (:MaintainerRule) boundaries   • Issue-to-code pathfinder
-  • 1-Click triage & label actions        • Auto-generate missing test patch
+                                  ┌───────────────────────────────┐
+                                  │   GitHub OAuth Handshake      │
+                                  │  (Authenticated or Anonymous) │
+                                  └───────────────┬───────────────┘
+                                                  │
+                                                  ▼
+                                  ┌───────────────────────────────┐
+                                  │   Universal Omnibox Parser    │
+                                  │   (Repo, PR, Issue, or Blob)  │
+                                  └───────────────┬───────────────┘
+                                                  │
+                      ┌───────────────────────────┴───────────────────────────┐
+                      ▼                                                       ▼
+          [Owner / Write Permission]                              [Read / External Contributor]
+          🛡️ Maintainer Cockpit                                  🚀 Contributor Flight Deck
+  • Slop Detection Score (0-100)                          • Pre-Flight Blast Radius Check
+  • 1-Hop Breaking Downstream Caller Map                  • Untouched Caller & Test Warnings
+  • Slopsquatting / Hallucinated Dependency Alert         • Issue-to-Code Pathfinder
+  • Custom (:MaintainerRule) Enforcement                  • One-Click Missing Test Stub Generator
+  • 1-Click Verified Sticky Comment & Label Triage        • Draft PR / Local Patch Preview
 ```
 
 ### Persona 1: Sarah — The Overwhelmed Maintainer
-* **Profile:** Core maintainer of a widely-used Python web library (8,000+ stars).
-* **Pain Points:** Spends 3 hours every day closing duplicate, low-effort PRs; terrified of merging PRs that break downstream consumers; struggles to enforce architectural guidelines across 300+ files.
-* **Needs:** Instant signal on whether a PR touched tests, whether changes are cosmetic slop, which public APIs broke, and automated triage generation.
+* **Context:** Maintains a popular open-source project (10,000+ stars) receiving 15–30 PRs weekly.
+* **Core Pain:** 60% of incoming PRs are AI-generated slop: cosmetically rewritten comments, hallucinated imports, or refactored functions without test updates. Reviewing them manually leads to burnout.
+* **Jobs To Be Done (JTBD):**
+  1. Instantly see if a PR touches tests when modifying core public functions.
+  2. Detect if new imports are fake or typo-squatted.
+  3. Close or label slop PRs in 1 click without typing repetitive explanations.
+  4. Post an architectural summary directly to the PR without spamming the thread.
 
 ### Persona 2: Alex — The Proactive Contributor
-* **Profile:** Full-stack engineer contributing a bug fix to a complex open-source project.
-* **Pain Points:** Intimidated by the massive codebase; doesn't know which files to touch; doesn't know what existing tests test the modified function; scared of getting rejected by maintainers.
-* **Needs:** Clear guidance on caller blast radius, warnings about untouched test suites, and pathfinding from an issue description to exact functions.
+* **Context:** Senior engineer submitting a bugfix to a large, unfamiliar repository.
+* **Core Pain:** Terrified of accidentally breaking callers across 20 other files or being rejected by maintainers for missing test coverage.
+* **Jobs To Be Done (JTBD):**
+  1. Inspect the blast radius of local changes before submitting a PR.
+  2. Identify every downstream caller that depends on the modified function.
+  3. Automatically discover which existing tests exercise the code path.
 
 ---
 
-## 3. The V1 Golden Path (Step-by-Step Flow)
+## 4. The 5 Deterministic Graph Filters (0 LLM Tokens)
+
+GitOS executes 5 deterministic filters directly in memory and via FalkorDB graph traversal before any LLM inference is considered:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as User / Maintainer
-    participant UI as Next.js Canvas UI
-    participant API as FastAPI Backend
-    participant GH as GitHub REST API
-    participant Graph as FalkorDB Engine
-    participant Groq as Groq Cloud (Llama-3.3-70B)
+graph TD
+    PR[Incoming Pull Request] --> F1{Filter 1: Untested Callers}
+    F1 -->|Ratio > 0| A1[Flag: Missing Test Coverage]
+    F1 --> F2{Filter 2: Cosmetic Slop}
+    F2 -->|AST Diff near 0| A2[Flag: AI Cosmetic Slop]
+    F2 --> F3{Filter 3: Dead Code}
+    F3 -->|In-Degree = 0| A3[Flag: Dead Code Injected]
+    F3 --> F4{Filter 4: Maintainer Rules}
+    F4 -->|Violation Found| A4[Flag: Architecture Boundary Violated]
+    F4 --> F5{Filter 5: Slopsquatting}
+    F5 -->|Unknown / Typo Package| A5[Flag: Hallucinated / Malicious Dependency]
+    F5 --> SCORE[Compute Unified Slop Score 0-100]
+```
 
-    User->>UI: Paste GitHub URL (Repo, PR, Issue, or Blob)
-    UI->>API: POST /api/analyze { url, auth_token }
-    API->>API: parse_github_url() [Regex Omnibox Router]
-    
-    alt In-Memory Tree Extraction
-        API->>GH: GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1
-        GH-->>API: File Tree (JSON, < 7MB, In-Memory)
-        API->>GH: Fetch diff / patch for modified files
-        GH-->>API: Unified diff in RAM
-    end
+### Filter 1: Untested Caller Ratio
+* **Logic:** Detects functions modified in the diff that have downstream callers with existing tests where those tests are **not** updated in the PR.
+* **Formula:** $\text{Risk} = \frac{|\text{Callers with Untouched Tests}|}{|\text{Total Callers}|} \times 100$.
 
-    API->>API: Python AST parser extracts Classes, Funcs, Calls, Imports
-    API->>Graph: Ingest / Update Subgraph & Cache by commit_sha
-    
-    rect rgb(20, 30, 45)
-        Note over API,Graph: 4 Deterministic Filters (0 LLM Tokens)
-        API->>Graph: Check 1: Untested Call Impact
-        API->>Graph: Check 2: AST vs Text Diff Ratio
-        API->>Graph: Check 3: Dead Code Injection
-        API->>Graph: Check 4: Maintainer Rule Boundaries
-    end
+### Filter 2: AST vs Text Diff Ratio (Cosmetic Slop Detector)
+* **Logic:** Measures semantic AST nodes changed versus raw lines modified.
+* **Trigger:** If $\Delta_{\text{Lines}} > 30$ and $\Delta_{\text{AST}} < 2$, flag as **Cosmetic Slop** (typical of AI reformatting or re-commenting).
 
-    Graph-->>API: Blast Radius Nodes, Edges & Risk Metrics
-    
-    opt Complex Triage Request / Auto-Test Generation
-        API->>Groq: Single-shot prompt with compressed subgraph (< 1K tokens)
-        Groq-->>API: Concise triage verdict & proposed test diff
-    end
+### Filter 3: Dead Code Injection
+* **Logic:** Analyzes newly added functions. If their in-degree across the entire repository graph is 0 and they are not exported as public entry points or test cases, flag as dead code.
 
-    API-->>UI: Return Shared Contract Payload (< 400ms)
-    UI->>User: Render 3D Force Graph, Telemetry Gauges & Action Dock
+### Filter 4: Maintainer Architectural Boundary Rules
+* **Logic:** Evaluates user-defined rules (e.g. `frontend/*` must never directly import `backend/db/*`, or first-time contributors cannot touch `.github/workflows/*`).
 
-    User->>UI: Clicks "Request Test Coverage" Action Pill
-    UI->>User: Display Explicit Confirmation Modal
-    User->>UI: Confirms Action
-    UI->>API: POST /api/execute-action { action_type, payload }
-    API->>GH: Execute via User's OAuth Token
-    GH-->>UI: 200 OK (Comment posted / PR labeled)
+### Filter 5: Slopsquatting & Hallucinated Dependency Sentinel (NEW)
+* **Logic:** Extracts all new `import` and `require` statements added in the diff. Cross-checks them against:
+  1. The repository's declared package manifest (`requirements.txt`, `package.json`, `pyproject.toml`, `go.mod`).
+  2. Public registry availability (PyPI, npm) with caching.
+* **Trigger:** If an imported package is not in the project manifest and is either unindexed or newly created with near-zero downloads, immediately alert on potential **AI Hallucination / Slopsquatting Attack**.
+
+---
+
+## 5. Zero-Spam Sticky Comment & Inline Mermaid Architecture
+
+### 5.1 The Sticky Self-Updating Comment Protocol
+To eliminate bot fatigue and PR timeline pollution:
+1. **Signature Marker:** Every GitOS PR comment begins with a hidden HTML anchor:  
+   `<!-- gitos-sticky-intelligence -->`
+2. **Search Before Post:** When a triage action is executed:
+   - GitOS queries `/repos/{owner}/{repo}/issues/{pr_id}/comments`.
+   - If a comment contains `<!-- gitos-sticky-intelligence -->`, GitOS issues a **`PATCH`** request to update the existing comment in-place.
+   - If no comment exists, GitOS issues a **`POST`** request to create the initial sticky comment.
+3. **Structured Accordions:** The comment uses collapsible `<details>` blocks to provide deep technical evidence without overwhelming the PR discussion.
+
+### 5.2 Native Inline Mermaid Blast Radius
+GitOS compiles the impacted subgraph directly into GitHub-native Mermaid syntax within the comment:
+
+```markdown
+<!-- gitos-sticky-intelligence -->
+## 🛡️ GitOS Blast Radius Intelligence
+
+| Metric | Verdict | Status |
+|---|---|---|
+| **Slop Risk Score** | **18 / 100** | 🟢 Low Risk |
+| **Modified Symbols** | 2 Functions | Verified |
+| **Untested Downstream Callers** | 3 Callers | ⚠️ Action Required |
+| **Package Integrity** | Clean | ✅ Verified |
+
+```mermaid
+graph TD
+    classDef modified fill:#f85149,stroke:#ff7b72,stroke-width:2px,color:#fff;
+    classDef untested fill:#d29922,stroke:#f0883e,stroke-width:2px,color:#fff;
+    classDef tested fill:#238636,stroke:#3fb950,stroke-width:2px,color:#fff;
+
+    M1["auth.py::verify_token"]:::modified --> C1["billing.py::charge_user"]:::untested
+    M1 --> C2["api.py::get_profile"]:::untested
+    M1 --> T1["tests/test_auth.py::test_verify"]:::tested
+```
+
+<details>
+<summary><b>🔍 View Impacted Callers & Recommended Actions</b></summary>
+
+- `billing.py::charge_user` (Untested caller: line 42)
+- `api.py::get_profile` (Untested caller: line 88)
+
+**Recommendation:** Add test assertions verifying updated token expiration handling.
+</details>
+
+*Automated verification powered by [GitOS](https://github.com/ace-ify/GitOS) • Zero-Disk • Deterministic Graph Engine*
 ```
 
 ---
 
-## 4. Detailed Functional Requirements
+## 6. Model Context Protocol (MCP) Integration
 
-### 4.1 Universal Smart Omnibox
-- **FR-1.1:** Must support zero-configuration input detection for:
-  - Repositories: `https://github.com/:owner/:repo`
-  - Pull Requests: `https://github.com/:owner/:repo/pull/:pr_number`
-  - Issues: `https://github.com/:owner/:repo/issues/:issue_number`
-  - Blobs / Source Files: `https://github.com/:owner/:repo/blob/:ref/:path`
-- **FR-1.2:** Must validate URL format client-side and server-side, stripping tracking parameters and normalizing URLs.
+To bring GitOS intelligence into modern developer IDEs (Cursor, Claude Code, Antigravity):
 
-### 4.2 In-Memory Git Engine (Zero Disk Footprint)
-- **FR-2.1:** The server must **never** run `git clone` to disk.
-- **FR-2.2:** File trees must be fetched recursively using `/git/trees/{tree_sha}?recursive=1`.
-- **FR-2.3:** Large repos with truncated trees (`truncated: true`) must gracefully fetch sub-trees on-demand or limit analysis to the PR diff scope.
-- **FR-2.4:** Only file contents directly involved in the PR diff or 1-hop dependencies must be loaded into memory.
-
-### 4.3 Deterministic Graph Pre-Filters (0 LLM Tokens)
-- **FR-3.1 (Untested Callers):** Calculate ratio of modified functions having connected test functions untouched in the PR. If >0, flag alert.
-- **FR-3.2 (AST vs Text Diff):** Measure $\Delta_{\text{AST}} / \Delta_{\text{Text}}$. If text changes are high but AST changes are near zero, flag as Cosmetic Slop.
-- **FR-3.3 (Dead Code):** Check new functions for in-degree = 0 across the project call graph.
-- **FR-3.4 (Maintainer Rules):** Evaluate Cypher patterns representing architectural boundaries.
-
-### 4.4 Single-Shot Compressed LLM Layer
-- **FR-4.1:** Context sent to Groq API (Llama-3.3-70B) must strictly not exceed 1,000 tokens.
-- **FR-4.2:** Context must contain only the target AST signatures, 1-hop breaking callers, and the unified diff.
-- **FR-4.3:** Output must format as structured micro-patches or triage summaries.
-
-### 4.5 Security & Ethical GitHub Actions
-- **FR-5.1:** All GitHub write actions (comments, labels, status checks, closing PRs, opening draft PRs) must require:
-  1. Authenticated user OAuth token with appropriate scopes.
-  2. Explicit user click on a contextual action pill.
-  3. Explicit confirmation in a modal showing the exact action payload.
-- **FR-5.2:** Zero unprompted bot activity.
+### Endpoints:
+- `POST /mcp/blast-radius`: Accepts local file path + patch string; returns affected downstream symbols and untested callers.
+- `POST /mcp/slop-check`: Evaluates patch against the 5 deterministic filters and returns risk score.
+- `POST /mcp/pathfinder`: Suggests code files and functions to modify given an issue description.
 
 ---
 
-## 5. Non-Functional Requirements (NFRs)
+## 7. Non-Functional Requirements & Resilience SLAs
 
 | Metric | Target SLA | Strategy |
 |---|---|---|
-| **Deterministic Graph Latency** | < 500 ms | In-memory AST + FalkorDB indexing |
-| **FalkorDB Cache Replay** | < 50 ms | Graph snapshot keyed by `commit_sha` |
-| **LLM Inference Latency** | < 1.2 s | Groq Cloud Llama-3.3-70B API |
-| **Server Memory per Analysis** | < 64 MB | Stream-based diff parsing, ephemeral AST |
-| **Server Disk Usage** | 0 bytes | No disk cloning or temp directories |
+| **Deterministic Graph Latency** | < 450 ms | In-memory AST + FalkorDB indexing |
+| **FalkorDB Cache Replay** | < 30 ms | Subgraph indexed by `commit_sha` |
+| **LLM Inference Latency** | < 1.0 s | Groq Cloud Llama-3.3-70B API |
+| **Server Memory per Analysis** | < 48 MB | Streamed diff parsing, ephemeral AST |
+| **Server Disk Usage** | **0 bytes** | Strict zero-disk policy (No disk cloning) |
+| **GitHub API Rate Limit Resilience** | 100% Graceful | Conditional ETag caching (304), rate limit headers |
+| **Large Monorepo Handling** | < 2.0 s | Scope tree parsing strictly to modified files & 1-hop callers |
 
 ---
 
-## 6. Release Milestones & Success Metrics
+## 8. Prioritized Feature Roadmap (RICE Scoring)
 
-### V1 Milestones
-- **M1 (Current):** Foundational directory structure, shared contract, FalkorDB connector stub, FastAPI omnibox router, and 3D Force Graph UI scaffold.
-- **M2:** Full in-memory tree parser with Python AST symbol extractor.
-- **M3:** 4 Deterministic graph filters implemented in FalkorDB Cypher queries.
-- **M4:** Groq context compression integration and explicit OAuth action executor.
-- **M5:** Production deployment and public beta.
+| Feature | Reach (1-5) | Impact (1-5) | Confidence (1-5) | Effort (1-5) | RICE Score $\left(\frac{R \times I \times C}{E}\right)$ | Priority |
+|---|---|---|---|---|---|---|
+| **Sticky Self-Updating PR Comment** | 5 | 5 | 5 | 2 | **62.5** | **P0 (Immediate)** |
+| **Inline Mermaid Diagram Generator** | 5 | 5 | 5 | 2 | **62.5** | **P0 (Immediate)** |
+| **Filter 5: Slopsquatting Sentinel** | 4 | 5 | 5 | 2 | **50.0** | **P0 (Immediate)** |
+| **MCP Server Endpoints for IDEs** | 4 | 4 | 5 | 2 | **40.0** | **P1 (Next)** |
+| **Custom Maintainer Rule Builder UI** | 3 | 4 | 4 | 2 | **24.0** | **P1 (Next)** |
 
-### Key Performance Indicators (KPIs)
-- **Maintainer Triage Time:** Reduced by 75% for incoming PRs.
-- **Zero Token Cost for 80% of Scans:** 8 out of 10 clean or obvious slop PRs triaged with 0 LLM tokens.
-- **Zero Accidental Write Actions:** 100% adherence to explicit user confirmation policy.
+---
+
+## 9. Success Metrics (KPIs)
+- **Triage Velocity:** Reduce maintainer PR evaluation time from 45 minutes to < 30 seconds.
+- **Zero Bot Spam Complaints:** 0 user reports of PR comment flooding (guaranteed by single sticky comment architecture).
+- **Zero-Token Efficiency:** > 85% of incoming pull requests assessed with 0 LLM tokens.
+- **Supply-Chain Interception:** 100% detection of unlisted / hallucinated package imports in tested benchmarks.

@@ -1082,6 +1082,7 @@ export default function GitOSCommandCenter() {
         </form>
 
         {/* Mode Switcher, Rate Limit, Auth */}
+        {/* Dynamic Mode Badge & OAuth Connect */}
         <div className="flex items-center gap-2.5">
           {/* Rate limit badge */}
           <div className="text-[11px] font-mono text-slate-400 hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#121829] border border-slate-800">
@@ -1089,31 +1090,22 @@ export default function GitOSCommandCenter() {
             <span>API: {rateLimitRem} req/hr</span>
           </div>
 
-          {/* Mode Switcher */}
-          <div className="flex items-center bg-[#121829] p-0.5 rounded-xl border border-slate-800">
-            <button
-              onClick={() => setUserMode("maintainer")}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
-                userMode === "maintainer"
-                  ? "bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <ShieldCheck className="w-3 h-3" /> Maintainer
-            </button>
-            <button
-              onClick={() => setUserMode("contributor")}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
-                userMode === "contributor"
-                  ? "bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              <Sparkles className="w-3 h-3" /> Contributor
-            </button>
+          {/* Dynamic Auto-Detected Intent Badge */}
+          <div className="flex items-center px-3 py-1.5 rounded-xl bg-[#121829] border border-slate-800 text-xs font-semibold">
+            {data.user_mode === "maintainer" ? (
+              <span className="text-cyan-400 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Maintainer Defense Mode</span>
+              </span>
+            ) : (
+              <span className="text-amber-300 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Contributor Pre-Flight Mode</span>
+              </span>
+            )}
           </div>
 
-          {/* Auth Button */}
+          {/* GitHub OAuth Connect Button */}
           {currentUser ? (
             <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
               <img
@@ -1122,13 +1114,25 @@ export default function GitOSCommandCenter() {
                 className="w-7 h-7 rounded-full border border-cyan-500/50"
               />
               <span className="text-xs font-semibold text-white">@{currentUser.login}</span>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch(`${API_BASE_URL}/api/auth/logout`, { method: "POST", credentials: "include" });
+                    setCurrentUser(null);
+                  } catch {}
+                }}
+                className="text-slate-400 hover:text-rose-400 p-1 rounded transition"
+                title="Sign out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
             </div>
           ) : (
             <button
               onClick={() => setIsAuthModalOpen(true)}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 flex items-center gap-1.5 transition"
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#1e293b] hover:bg-cyan-500 hover:text-slate-950 text-white border border-slate-700 flex items-center gap-1.5 transition shadow-sm"
             >
-              <User className="w-3.5 h-3.5 text-cyan-400" /> Connect
+              <User className="w-3.5 h-3.5 text-cyan-400" /> Sign In with GitHub
             </button>
           )}
         </div>
@@ -1852,11 +1856,11 @@ export default function GitOSCommandCenter() {
       {/* Auth Modal */}
       {isAuthModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="max-w-sm w-full p-5 rounded-2xl bg-[#0f1422] border border-slate-700 shadow-2xl space-y-4">
+          <div className="max-w-md w-full p-5 rounded-2xl bg-[#0f1422] border border-slate-700 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-cyan-400" />
-                Developer Sandbox Auth
+                GitHub Authentication
               </h3>
               <button
                 onClick={() => setIsAuthModalOpen(false)}
@@ -1866,43 +1870,74 @@ export default function GitOSCommandCenter() {
               </button>
             </div>
             <p className="text-xs text-slate-400">
-              Select an identity to test maintainer vs contributor permission routing:
+              Sign in with your GitHub account. GitOS automatically resolves whether you are a maintainer or contributor per repository.
             </p>
+
+            {/* Direct GitHub OAuth Flow */}
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch(`${API_BASE_URL}/api/auth/github/login`);
+                  const data = await res.json();
+                  if (data.oauth_configured && data.auth_url) {
+                    window.location.href = data.auth_url;
+                  } else {
+                    alert("GitHub OAuth App credentials (GITHUB_CLIENT_ID) not yet configured in server environment. Use developer quick login below.");
+                  }
+                } catch {
+                  alert("Could not connect to auth service.");
+                }
+              }}
+              className="w-full py-2.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition shadow-lg shadow-cyan-500/20"
+            >
+              <User className="w-4 h-4" />
+              <span>Authorize with GitHub OAuth</span>
+            </button>
+
+            <div className="relative py-1">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div>
+              <div className="relative flex justify-center text-[10px] uppercase font-mono text-slate-500 bg-[#0f1422] px-2">or quick developer login</div>
+            </div>
+
             <div className="space-y-2">
               <button
-                onClick={() => {
-                  setCurrentUser({
-                    login: "octocat-maintainer",
-                    name: "Octocat Maintainer",
-                    avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4",
-                  });
-                  setUserMode("maintainer");
-                  setIsAuthModalOpen(false);
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_BASE_URL}/api/auth/mock-login?role=maintainer`, { method: "POST", credentials: "include" });
+                    if (res.ok) {
+                      const d = await res.json();
+                      setCurrentUser(d.user);
+                      setUserMode("maintainer");
+                      setIsAuthModalOpen(false);
+                    }
+                  } catch {}
                 }}
                 className="w-full p-2.5 rounded-xl bg-[#121829] hover:bg-[#161e33] border border-slate-700 text-left text-xs font-semibold text-white flex items-center gap-2 transition"
               >
                 <ShieldCheck className="w-4 h-4 text-cyan-400" />
                 <div>
-                  <div>Maintainer Identity (Admin)</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Full defense triage & rule enforcement</div>
+                  <div>Octocat Maintainer Account</div>
+                  <div className="text-[10px] text-slate-400 font-normal">Simulated maintainer write access with full audit dock</div>
                 </div>
               </button>
               <button
-                onClick={() => {
-                  setCurrentUser({
-                    login: "contributor-alex",
-                    name: "Alex Contributor",
-                    avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4",
-                  });
-                  setUserMode("contributor");
-                  setIsAuthModalOpen(false);
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_BASE_URL}/api/auth/mock-login?role=contributor`, { method: "POST", credentials: "include" });
+                    if (res.ok) {
+                      const d = await res.json();
+                      setCurrentUser(d.user);
+                      setUserMode("contributor");
+                      setIsAuthModalOpen(false);
+                    }
+                  } catch {}
                 }}
                 className="w-full p-2.5 rounded-xl bg-[#121829] hover:bg-[#161e33] border border-slate-700 text-left text-xs font-semibold text-white flex items-center gap-2 transition"
               >
                 <Sparkles className="w-4 h-4 text-cyan-400" />
                 <div>
-                  <div>Contributor Identity (Read)</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Pre-flight checks & test patch generator</div>
+                  <div>Alex Contributor Account</div>
+                  <div className="text-[10px] text-slate-400 font-normal">Simulated contributor author access with blast telemetry</div>
                 </div>
               </button>
             </div>

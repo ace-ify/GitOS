@@ -432,3 +432,129 @@ def is_node_modified_by_patch(node: Dict[str, Any], modified_lines: Set[int]) ->
 
     return False
 
+
+# ==============================================================================
+# Filter 5: Slopsquatting & Hallucinated Dependency Sentinel
+# ==============================================================================
+
+PYTHON_STDLIB = {
+    "sys", "os", "math", "re", "json", "time", "logging", "typing", "datetime",
+    "unittest", "collections", "itertools", "functools", "asyncio", "hashlib",
+    "uuid", "pathlib", "copy", "random", "string", "io", "tempfile", "shutil",
+    "subprocess", "threading", "multiprocessing", "queue", "socket", "http",
+    "urllib", "email", "xml", "csv", "sqlite3", "contextlib", "dataclasses",
+    "enum", "inspect", "abc", "traceback", "weakref", "warnings", "gc",
+    "platform", "cmath", "bisect", "heapq", "array", "struct", "zipfile",
+    "tarfile", "gzip", "pickle", "ctypes", "typing_extensions"
+}
+
+NODE_BUILTINS = {
+    "fs", "path", "http", "https", "url", "querystring", "crypto", "os",
+    "stream", "events", "util", "child_process", "buffer", "assert", "zlib",
+    "cluster", "dgram", "dns", "net", "readline", "tls", "tty", "v8", "vm",
+    "worker_threads", "constants", "perf_hooks"
+}
+
+PY_IMPORT_REGEX = re.compile(r"^\+\s*(?:import\s+([\w\.\-]+)|from\s+([\w\.\-]+)\s+import)")
+JS_IMPORT_REGEX = re.compile(r"^\+\s*(?:import\s+.*?from\s+['\"]([^'\"]+)['\"]|const\s+.*?=\s*require\(['\"]([^'\"]+)['\"]\))")
+
+
+def extract_patch_new_imports(patch: str, language: str = "python") -> List[str]:
+    """
+    Extracts external package names imported in newly added lines of a unified diff patch.
+    Filters out standard library modules and relative local imports.
+    """
+    if not patch:
+        return []
+
+    packages: Set[str] = set()
+
+    for line in patch.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+
+        if language in ("python", "generic"):
+            m = PY_IMPORT_REGEX.match(line)
+            if m:
+                raw_pkg = m.group(1) or m.group(2)
+                if raw_pkg:
+                    top_pkg = raw_pkg.split(".")[0].strip()
+                    if top_pkg and not top_pkg.startswith(".") and top_pkg.lower() not in PYTHON_STDLIB:
+                        packages.add(top_pkg)
+
+        if language in ("javascript", "typescript", "generic"):
+            m = JS_IMPORT_REGEX.match(line)
+            if m:
+                raw_pkg = m.group(1) or m.group(2)
+                if raw_pkg:
+                    raw_pkg = raw_pkg.strip()
+                    if not raw_pkg.startswith(".") and not raw_pkg.startswith("/"):
+                        if raw_pkg.startswith("@"):
+                            parts = raw_pkg.split("/")
+                            top_pkg = "/".join(parts[:2]) if len(parts) >= 2 else raw_pkg
+                        else:
+                            top_pkg = raw_pkg.split("/")[0]
+                        if top_pkg.lower() not in NODE_BUILTINS:
+                            packages.add(top_pkg)
+
+    return sorted(list(packages))
+
+
+async def audit_dependency_risks(
+    new_packages: List[str],
+    manifest_text: Optional[str] = None,
+    ecosystem: str = "pypi",
+) -> List[Dict[str, Any]]:
+    """
+    Cross-checks newly added packages against the repo manifest and official registries.
+    Flags hallucinated/slopsquatted packages that do not exist on PyPI or npm.
+    """
+    import httpx
+
+    alerts: List[Dict[str, Any]] = []
+    if not new_packages:
+        return alerts
+
+    manifest_lower = manifest_text.lower() if manifest_text else ""
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        for pkg in new_packages:
+            in_manifest = pkg.lower() in manifest_lower
+
+            if ecosystem == "pypi":
+                registry_url = f"https://pypi.org/pypi/{pkg}/json"
+            else:
+                registry_url = f"https://registry.npmjs.org/{pkg}"
+
+            try:
+                resp = await client.get(registry_url)
+                if resp.status_code == 404:
+                    alerts.append({
+                        "package": pkg,
+                        "type": "HALLUCINATED_PACKAGE",
+                        "severity": "CRITICAL",
+                        "in_manifest": in_manifest,
+                        "message": f"Package '{pkg}' was NOT found on {ecosystem.upper()}. Likely AI hallucination or slopsquatting vulnerability.",
+                    })
+                elif not in_manifest and manifest_text:
+                    alerts.append({
+                        "package": pkg,
+                        "type": "UNDECLARED_DEPENDENCY",
+                        "severity": "MEDIUM",
+                        "in_manifest": False,
+                        "message": f"Package '{pkg}' is imported in code but not listed in project manifest files.",
+                    })
+            except Exception as e:
+                logger.debug("Registry check skipped for '%s': %s", pkg, e)
+                if not in_manifest and manifest_text:
+                    alerts.append({
+                        "package": pkg,
+                        "type": "UNDECLARED_DEPENDENCY",
+                        "severity": "LOW",
+                        "in_manifest": False,
+                        "message": f"Package '{pkg}' is not found in manifest (offline registry check).",
+                    })
+
+    return alerts
+
+

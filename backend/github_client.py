@@ -54,6 +54,57 @@ class GitHubClient:
         if reset is not None:
             self.rate_limit_reset = int(reset)
 
+    async def get_repository_metadata(
+        self, owner: str, repo: str, token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Fetches repo metadata (default_branch, permissions, stars, description)."""
+        url = f"{self.base_url}/repos/{owner}/{repo}"
+        cached_etag = self._etag_cache.get(url, (None, None))[0]
+        headers = self._get_headers(token, etag=cached_etag)
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            self._update_rate_limits(resp.headers)
+            if resp.status_code == 304:
+                return self._etag_cache[url][1]
+            resp.raise_for_status()
+            data = resp.json()
+            etag = resp.headers.get("etag")
+            if etag:
+                self._etag_cache[url] = (etag, data)
+            return data
+
+    async def get_repository_tree(
+        self, owner: str, repo: str, branch: str = "main", token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetches in-memory file tree recursively without cloning (FR-2.2).
+        Filters out non-code assets and returns code files.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+        cached_etag = self._etag_cache.get(url, (None, None))[0]
+        headers = self._get_headers(token, etag=cached_etag)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+            self._update_rate_limits(resp.headers)
+            if resp.status_code == 304:
+                return self._etag_cache[url][1]
+            if resp.status_code != 200:
+                logger.warning("Failed to fetch tree for %s/%s branch %s: %s", owner, repo, branch, resp.status_code)
+                return []
+            data = resp.json()
+            tree = data.get("tree", [])
+            code_files = [
+                item for item in tree
+                if item.get("type") == "blob"
+                and not any(item.get("path", "").endswith(ext) for ext in EXCLUDED_EXTENSIONS)
+            ]
+            etag = resp.headers.get("etag")
+            if etag:
+                self._etag_cache[url] = (etag, code_files)
+            return code_files
+
     async def get_pull_request_metadata(
         self, owner: str, repo: str, pull_id: str, token: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -190,6 +241,85 @@ class GitHubClient:
             logger.warning("Error searching code references for '%s': %s", symbol_name, e)
         return []
 
+    async def find_sticky_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_id: str,
+        marker: str = "<!-- gitos-sticky-intelligence -->",
+        token: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Searches issue/PR comments for the sticky intelligence marker to avoid PR thread spam.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/{pr_id}/comments?per_page=50"
+        headers = self._get_headers(token)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+                self._update_rate_limits(resp.headers)
+                if resp.status_code == 200:
+                    comments = resp.json()
+                    for comment in comments:
+                        if marker in comment.get("body", ""):
+                            return comment.get("id")
+        except Exception as e:
+            logger.warning("Error searching for sticky comment on PR #%s: %s", pr_id, e)
+        return None
+
+    async def patch_pr_comment(
+        self, owner: str, repo: str, comment_id: int, body: str, token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Updates an existing PR comment in-place (PATCH) to prevent spamming the PR timeline.
+        """
+        url = f"{self.base_url}/repos/{owner}/{repo}/issues/comments/{comment_id}"
+        headers = self._get_headers(token)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.patch(url, headers=headers, json={"body": body})
+            self._update_rate_limits(resp.headers)
+            if resp.status_code != 200:
+                logger.error("Failed to update comment #%s: %s %s", comment_id, resp.status_code, resp.text)
+                raise httpx.HTTPStatusError(f"GitHub update comment failed ({resp.status_code})", request=resp.request, response=resp)
+            data = resp.json()
+            return {
+                "id": data.get("id"),
+                "html_url": data.get("html_url"),
+                "updated_at": data.get("updated_at"),
+                "action": "updated",
+            }
+
+    async def upsert_sticky_pr_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_id: str,
+        body: str,
+        marker: str = "<!-- gitos-sticky-intelligence -->",
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Zero-Spam Self-Updating Comment:
+        If a GitOS comment already exists on the PR, updates it in-place.
+        Otherwise creates a new comment with the sticky marker.
+        """
+        if marker not in body:
+            body = f"{marker}\n{body}"
+
+        existing_id = await self.find_sticky_comment(owner, repo, pr_id, marker, token)
+        if existing_id:
+            logger.info("Found existing sticky comment #%s on PR #%s. Patching in-place.", existing_id, pr_id)
+            res = await self.patch_pr_comment(owner, repo, existing_id, body, token)
+            res["action"] = "updated"
+            return res
+
+        logger.info("No existing sticky comment on PR #%s. Posting new comment.", pr_id)
+        res = await self.post_pr_comment(owner, repo, pr_id, body, token)
+        res["action"] = "created"
+        return res
+
     async def post_pr_comment(
         self, owner: str, repo: str, pr_id: str, body: str, token: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -212,6 +342,7 @@ class GitHubClient:
                 "html_url": data.get("html_url"),
                 "created_at": data.get("created_at"),
             }
+
 
     async def close_pull_request(
         self, owner: str, repo: str, pr_id: str, token: Optional[str] = None
