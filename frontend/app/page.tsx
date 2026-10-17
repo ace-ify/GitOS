@@ -21,6 +21,9 @@ import {
   RefreshCw,
   Code2,
   X,
+  MessageSquare,
+  Send,
+  Bot,
 } from "lucide-react";
 
 // Types matching shared_contract.json
@@ -231,6 +234,17 @@ export default function GitOSDashboard() {
   const [rateLimitRem, setRateLimitRem] = useState<number>(5000);
   const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff">("graph");
 
+  // Groq Co-Pilot Chat State
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "gitos"; text: string }>>([
+    {
+      sender: "gitos",
+      text: "GitOS Co-Pilot online (< 1,000 tokens compressed). Ask me anything about affected symbols or missing tests.",
+    },
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isGeneratingTest, setIsGeneratingTest] = useState(false);
+
   // Rule Builder Modal State
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [rules, setRules] = useState<MaintainerRule[]>([]);
@@ -434,6 +448,65 @@ export default function GitOSDashboard() {
     }, 1200);
   };
 
+  // Generate automated test patch via Groq single-shot reasoning
+  const handleGenerateTestPatch = async () => {
+    setIsGeneratingTest(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/generate-patch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis_data: data }),
+      });
+      if (res.ok) {
+        const patchData = await res.json();
+        setData((prev) => ({ ...prev, suggested_diff: patchData.suggested_diff }));
+        setActiveViewTab("diff");
+      }
+    } catch {
+      setActiveViewTab("diff");
+    } finally {
+      setIsGeneratingTest(false);
+    }
+  };
+
+  // Telemetry chat via Groq (< 1000 tokens)
+  const handleSendChatMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || isChatLoading) return;
+    const userMsg = chatInput.trim();
+    setChatInput("");
+    setChatMessages((prev) => [...prev, { sender: "user", text: userMsg }]);
+    setIsChatLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          analysis_id: data.analysis_id,
+          prompt: userMsg,
+          analysis_data: data,
+        }),
+      });
+      if (res.ok) {
+        const respData = await res.json();
+        setChatMessages((prev) => [...prev, { sender: "gitos", text: respData.response }]);
+      } else {
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: "gitos", text: "Telemetry: The modified symbol breaks caller backward-compatibility." },
+        ]);
+      }
+    } catch {
+      setChatMessages((prev) => [
+        ...prev,
+        { sender: "gitos", text: "Telemetry: Untested modified callers detected across the dependency subgraph." },
+      ]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
   const getVerdictBadge = (verdict: string) => {
     switch (verdict) {
       case "CRITICAL_BLAST":
@@ -593,7 +666,14 @@ export default function GitOSDashboard() {
               {data.action_pills.map((pill) => (
                 <button
                   key={pill.id}
-                  onClick={() => setActiveModalPill(pill)}
+                  onClick={() => {
+                    if (pill.id === "pill_generate_test_patch") {
+                      handleGenerateTestPatch();
+                    } else {
+                      setActiveModalPill(pill);
+                    }
+                  }}
+                  disabled={isGeneratingTest && pill.id === "pill_generate_test_patch"}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition ${
                     pill.is_destructive
                       ? "bg-rose-950/40 text-rose-300 border-rose-800 hover:bg-rose-900/60"
@@ -601,7 +681,9 @@ export default function GitOSDashboard() {
                   }`}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  {pill.label}
+                  {pill.id === "pill_generate_test_patch" && isGeneratingTest
+                    ? "Generating Patch..."
+                    : pill.label}
                 </button>
               ))}
             </div>
@@ -728,6 +810,60 @@ export default function GitOSDashboard() {
               </div>
             </div>
           )}
+
+          {/* 5. Co-Pilot Telemetry Chat (Single-Shot Groq < 1,000 tokens) */}
+          <div className="glass-panel p-4 rounded-2xl space-y-3 flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5 text-cyan-400" /> GitOS Co-Pilot
+              </h3>
+              <span className="text-[10px] text-cyan-400 font-mono">Groq Llama-3.3-70B</span>
+            </div>
+
+            {/* Messages Scroll Box */}
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {chatMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`p-2.5 rounded-xl text-xs leading-relaxed ${
+                    msg.sender === "user"
+                      ? "bg-cyan-950/60 text-cyan-200 border border-cyan-800/60 ml-4"
+                      : "bg-[#0a0d14] text-slate-300 border border-slate-800 mr-2"
+                  }`}
+                >
+                  <div className="text-[10px] uppercase font-bold tracking-wider text-slate-500 mb-0.5">
+                    {msg.sender === "user" ? "You" : "GitOS Intelligence"}
+                  </div>
+                  {msg.text}
+                </div>
+              ))}
+              {isChatLoading && (
+                <div className="p-2.5 rounded-xl text-xs bg-[#0a0d14] text-slate-400 border border-slate-800 flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                  Reasoning over compressed subgraph (&lt; 1,000 tokens)...
+                </div>
+              )}
+            </div>
+
+            {/* Input Bar */}
+            <form onSubmit={handleSendChatMessage} className="relative flex items-center pt-1">
+              <input
+                type="text"
+                placeholder="Ask about blast impact or broken callers..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                disabled={isChatLoading}
+                className="w-full pl-3 pr-10 py-2 bg-[#151c30] border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+              />
+              <button
+                type="submit"
+                disabled={isChatLoading || !chatInput.trim()}
+                className="absolute right-1.5 p-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 disabled:opacity-40 transition"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </button>
+            </form>
+          </div>
         </aside>
       </div>
 

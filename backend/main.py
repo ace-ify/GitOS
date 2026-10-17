@@ -50,6 +50,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from backend.polyglot import extract_universal_ast, stitch_cross_file_graph, detect_language
 from backend.github_client import get_github_client
+from backend.compressor import get_groq_reasoner
 
 try:
     from graph.client import get_graph_client
@@ -59,6 +60,7 @@ except Exception as e:
     graph_client = None
 
 github_client = get_github_client()
+groq_reasoner = get_groq_reasoner()
 
 
 # ==============================================================================
@@ -87,6 +89,16 @@ class MaintainerRuleCreate(BaseModel):
     pattern: str
     severity: str = "high"
     description: str
+
+
+class GeneratePatchRequest(BaseModel):
+    analysis_data: Dict[str, Any]
+
+
+class ChatQueryRequest(BaseModel):
+    analysis_id: str
+    prompt: str
+    analysis_data: Optional[Dict[str, Any]] = None
 
 
 # In-memory store for custom maintainer rules
@@ -448,13 +460,13 @@ export class GatewayController {
             "outgoing_calls": 1,
         })
 
-    return {
+    response_payload = {
         "analysis_id": str(uuid.uuid4()),
         "url_parsed": parsed_url,
         "user_mode": req.user_mode or "maintainer",
         "risk_score": filter_results["risk_score"],
         "verdict": filter_results["verdict"],
-        "summary": f"Analyzed {len(parsed_project_files)} file(s). Found {len(modified_functions)} modified symbol(s) with multi-hop caller impact. Rate limit remaining: {github_client.rate_limit_remaining}.",
+        "summary": "",
         "deterministic_checks": filter_results["deterministic_checks"],
         "blast_radius_nodes": blast_nodes_formatted[:25],
         "blast_radius_edges": stitched_edges[:35],
@@ -468,6 +480,24 @@ export class GatewayController {
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     }
+
+    # Generate single-shot compressed triage summary via Groq
+    response_payload["summary"] = groq_reasoner.generate_triage_verdict(response_payload)
+    return response_payload
+
+
+@app.post("/api/generate-patch")
+async def generate_patch(req: GeneratePatchRequest):
+    """Generates an automated test patch using single-shot compressed Groq reasoning."""
+    patch = groq_reasoner.generate_test_patch(req.analysis_data)
+    return {"status": "success", "suggested_diff": patch}
+
+
+@app.post("/api/chat")
+async def chat_telemetry(req: ChatQueryRequest):
+    """Answers maintainer/contributor questions about blast radius (< 1000 token context)."""
+    answer = groq_reasoner.answer_telemetry_question(req.prompt, req.analysis_data or {})
+    return {"response": answer}
 
 
 @app.post("/api/execute-action")
