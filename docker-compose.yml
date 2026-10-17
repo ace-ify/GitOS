@@ -1,0 +1,68 @@
+version: "3.8"
+
+services:
+  # 1. FalkorDB Low-Latency Graph Database
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: gitos_falkordb
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb_data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - gitos_network
+
+  # 2. FastAPI Backend & Omnibox Router
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: gitos_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - FALKORDB_HOST=falkordb
+      - FALKORDB_PORT=6379
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - FRONTEND_URL=http://localhost:3000
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - gitos_network
+
+  # 3. Next.js 3D Force Graph Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+    container_name: gitos_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - gitos_network
+
+volumes:
+  falkordb_data:
+    driver: local
+
+networks:
+  gitos_network:
+    driver: bridge
