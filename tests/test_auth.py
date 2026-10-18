@@ -34,6 +34,14 @@ class TestAuthModule(unittest.TestCase):
         role = asyncio.run(resolve_repo_role("octocat", "octocat", "Hello-World", "dummy_token"))
         self.assertEqual(role, "maintainer")
 
+    def test_token_login_rejection_empty(self):
+        from fastapi.testclient import TestClient
+        from backend.main import app
+        client = TestClient(app)
+        resp = client.post("/api/auth/token-login", json={"token": ""})
+        self.assertEqual(resp.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
+

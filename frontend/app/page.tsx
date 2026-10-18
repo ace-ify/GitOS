@@ -43,6 +43,7 @@ import {
   Copy,
   Check,
   Flame,
+  Key,
   Binary,
   GitFork,
 } from "lucide-react";
@@ -559,6 +560,72 @@ export default function GitOSCommandCenter() {
   // User Auth State
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [patInput, setPatInput] = useState("");
+  const [patLoading, setPatLoading] = useState(false);
+  const [patError, setPatError] = useState("");
+  const [isGhAwModalOpen, setIsGhAwModalOpen] = useState(false);
+  const [copiedGhAw, setCopiedGhAw] = useState(false);
+
+  const handlePatLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!patInput.trim()) return;
+    setPatLoading(true);
+    setPatError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/token-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: patInput.trim() }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setCurrentUser(d.user);
+        setIsAuthModalOpen(false);
+        setPatInput("");
+        // Dynamically resolve permission on active repo
+        if (data.url_parsed.owner && data.url_parsed.repo) {
+          const permRes = await fetch(
+            `${API_BASE_URL}/api/auth/check-permission?owner=${data.url_parsed.owner}&repo=${data.url_parsed.repo}`,
+            { credentials: "include" }
+          );
+          if (permRes.ok) {
+            const pData = await permRes.json();
+            if (pData.role && pData.role !== "guest") {
+              setUserMode(pData.role);
+            }
+          }
+        }
+      } else {
+        const err = await res.json();
+        setPatError(err.detail || "Invalid GitHub token.");
+      }
+    } catch (e) {
+      setPatError(`Connection error: ${e}`);
+    } finally {
+      setPatLoading(false);
+    }
+  };
+
+  // Automatically sync permission role when active repo or user changes
+  useEffect(() => {
+    if (!currentUser || !data.url_parsed.owner || !data.url_parsed.repo) return;
+    const fetchPerm = async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/auth/check-permission?owner=${data.url_parsed.owner}&repo=${data.url_parsed.repo}`,
+          { credentials: "include" }
+        );
+        if (res.ok) {
+          const pData = await res.json();
+          if (pData.role && pData.role !== "guest") {
+            setUserMode(pData.role);
+          }
+        }
+      } catch {}
+    };
+    fetchPerm();
+  }, [currentUser, data.url_parsed.owner, data.url_parsed.repo]);
 
   // Maintainer Rules Modal
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
@@ -1195,6 +1262,16 @@ export default function GitOSCommandCenter() {
         {/* Mode Switcher, Rate Limit, Auth */}
         {/* Dynamic Mode Badge & OAuth Connect */}
         <div className="flex items-center gap-2.5">
+          {/* GitHub Agentic Workflows (gh-aw) Export */}
+          <button
+            onClick={() => setIsGhAwModalOpen(true)}
+            className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-950/50 hover:bg-purple-900/60 border border-purple-800/70 text-purple-300 text-xs font-semibold font-mono transition shadow-sm"
+            title="Export GitHub Agentic Workflow (.github/workflows/gitos-guardian.md)"
+          >
+            <Bot className="w-3.5 h-3.5 text-purple-400" />
+            <span>gh-aw Integration</span>
+          </button>
+
           {/* Rate limit badge */}
           <div className="text-[11px] font-mono text-slate-400 hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#121829] border border-slate-800">
             <Database className="w-3.5 h-3.5 text-cyan-400" />
@@ -2336,7 +2413,7 @@ export default function GitOSCommandCenter() {
               </button>
             </div>
             <p className="text-xs text-slate-400">
-              Sign in with your GitHub account. GitOS automatically resolves whether you are a maintainer or contributor per repository.
+              Sign in with your GitHub account. GitOS automatically resolves whether you are a maintainer or contributor per repository using the GitHub Collaborator API.
             </p>
 
             {/* Direct GitHub OAuth Flow */}
@@ -2348,7 +2425,7 @@ export default function GitOSCommandCenter() {
                   if (data.oauth_configured && data.auth_url) {
                     window.location.href = data.auth_url;
                   } else {
-                    alert("GitHub OAuth App credentials (GITHUB_CLIENT_ID) not yet configured in server environment. Use developer quick login below.");
+                    alert("GitHub OAuth App client credentials are not configured on the backend. Please authenticate directly using your GitHub Personal Access Token (PAT) below.");
                   }
                 } catch {
                   alert("Could not connect to auth service.");
@@ -2360,51 +2437,165 @@ export default function GitOSCommandCenter() {
               <span>Authorize with GitHub OAuth</span>
             </button>
 
-            <div className="relative py-1">
+            <div className="relative py-2">
               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800"></div></div>
-              <div className="relative flex justify-center text-[10px] uppercase font-mono text-slate-500 bg-[#0f1422] px-2">or quick developer login</div>
+              <div className="relative flex justify-center text-[10px] uppercase font-mono text-slate-500 bg-[#0f1422] px-3">
+                or authenticate with personal access token
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <button
-                onClick={async () => {
-                  try {
-                    const res = await fetch(`${API_BASE_URL}/api/auth/mock-login?role=maintainer`, { method: "POST", credentials: "include" });
-                    if (res.ok) {
-                      const d = await res.json();
-                      setCurrentUser(d.user);
-                      setUserMode("maintainer");
-                      setIsAuthModalOpen(false);
-                    }
-                  } catch {}
-                }}
-                className="w-full p-2.5 rounded-xl bg-[#121829] hover:bg-[#161e33] border border-slate-700 text-left text-xs font-semibold text-white flex items-center gap-2 transition"
-              >
-                <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                <div>
-                  <div>Octocat Maintainer Account</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Simulated maintainer write access with full audit dock</div>
+            {/* Direct GitHub Token (PAT) Authentication */}
+            <form onSubmit={handlePatLogin} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-slate-400 uppercase flex items-center justify-between">
+                  <span>GitHub Token (PAT)</span>
+                  <span className="text-[9px] text-cyan-400 font-sans">repo + read:user</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={patInput}
+                    onChange={(e) => {
+                      setPatInput(e.target.value);
+                      setPatError("");
+                    }}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    className="w-full pl-8 pr-3 py-2 rounded-xl bg-[#090d16] border border-slate-800 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition"
+                  />
+                  <Key className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
                 </div>
+              </div>
+
+              {patError && (
+                <div className="text-[11px] text-rose-400 font-mono bg-rose-500/10 border border-rose-500/30 p-2.5 rounded-lg flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{patError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={patLoading || !patInput.trim()}
+                className="w-full py-2.5 px-4 rounded-xl bg-[#161e33] hover:bg-[#1c2744] disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition border border-slate-700 hover:border-cyan-500/50 shadow-sm"
+              >
+                {patLoading ? (
+                  <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+                )}
+                <span>{patLoading ? "Verifying with GitHub API..." : "Authenticate GitHub Identity"}</span>
               </button>
-              <button
-                onClick={async () => {
-                  try {
-                    const res = await fetch(`${API_BASE_URL}/api/auth/mock-login?role=contributor`, { method: "POST", credentials: "include" });
-                    if (res.ok) {
-                      const d = await res.json();
-                      setCurrentUser(d.user);
-                      setUserMode("contributor");
-                      setIsAuthModalOpen(false);
-                    }
-                  } catch {}
-                }}
-                className="w-full p-2.5 rounded-xl bg-[#121829] hover:bg-[#161e33] border border-slate-700 text-left text-xs font-semibold text-white flex items-center gap-2 transition"
-              >
-                <Sparkles className="w-4 h-4 text-cyan-400" />
-                <div>
-                  <div>Alex Contributor Account</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Simulated contributor author access with blast telemetry</div>
+
+              <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+                Tokens are validated directly against <code className="text-slate-400">api.github.com/user</code> and stored in an encrypted session cookie.
+              </p>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* GitHub Agentic Workflows (gh-aw) Export Modal */}
+      {isGhAwModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="max-w-2xl w-full p-6 rounded-2xl bg-[#0f1422] border border-cyan-500/40 shadow-2xl space-y-4 text-left">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-cyan-950/80 text-cyan-400 border border-cyan-800">
+                  <Bot className="w-5 h-5" />
                 </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    GitHub Agentic Workflows (<code className="text-cyan-400">gh-aw</code>) Integration
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Save to <span className="text-cyan-400">.github/workflows/gitos-guardian.md</span> &amp; run <code className="text-white">gh aw compile</code>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsGhAwModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Plug GitOS&apos;s AST Blast Radius and 0-Token Slop Scorer directly into GitHub Next&apos;s Agentic Workflows engine as native MCP tools:
+            </p>
+
+            <div className="relative bg-[#07090e] border border-slate-800 rounded-xl p-4 font-mono text-xs text-cyan-300 max-h-72 overflow-y-auto whitespace-pre">
+{`---
+name: GitOS Blast Radius & Slop Guardian
+on:
+  pull_request:
+    types: [opened, synchronize]
+permissions:
+  contents: read
+  pull-requests: write
+tools:
+  - name: gitos_blast_radius
+    mcp:
+      command: curl
+      args: ["-s", "-X", "POST", "http://localhost:8000/mcp/blast-radius", "-H", "Content-Type: application/json"]
+  - name: gitos_slop_check
+    mcp:
+      command: curl
+      args: ["-s", "-X", "POST", "http://localhost:8000/mcp/slop-check", "-H", "Content-Type: application/json"]
+safe-outputs:
+  - create-comment
+---
+
+# PR Triage & Graph Defense Instructions
+1. Run \`gitos_slop_check\` against the incoming PR diff.
+2. If \`is_cosmetic_slop\` is true, apply \`ai-slop-risk\` label and warn author.
+3. Call \`gitos_blast_radius\` to identify impacted downstream callers.
+4. Output sticky maintainer brief with the Mermaid DAG and required tests.`}
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <span className="text-[11px] text-slate-400 font-mono">
+                Compatible with <code className="text-cyan-400">gh-aw v0.1+</code> and MCP gateways
+              </span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`---
+name: GitOS Blast Radius & Slop Guardian
+on:
+  pull_request:
+    types: [opened, synchronize]
+permissions:
+  contents: read
+  pull-requests: write
+tools:
+  - name: gitos_blast_radius
+    mcp:
+      command: curl
+      args: ["-s", "-X", "POST", "http://localhost:8000/mcp/blast-radius", "-H", "Content-Type: application/json"]
+  - name: gitos_slop_check
+    mcp:
+      command: curl
+      args: ["-s", "-X", "POST", "http://localhost:8000/mcp/slop-check", "-H", "Content-Type: application/json"]
+safe-outputs:
+  - create-comment
+---
+
+# PR Triage & Graph Defense Instructions
+1. Run \`gitos_slop_check\` against the incoming PR diff.
+2. If \`is_cosmetic_slop\` is true, apply \`ai-slop-risk\` label and warn author.
+3. Call \`gitos_blast_radius\` to identify impacted downstream callers.
+4. Output sticky maintainer brief with the Mermaid DAG and required tests.`);
+                  setCopiedGhAw(true);
+                  setTimeout(() => setCopiedGhAw(false), 2000);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition flex items-center gap-1.5 ${
+                  copiedGhAw
+                    ? "bg-emerald-500 text-slate-950"
+                    : "bg-cyan-500 hover:bg-cyan-400 text-slate-950"
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {copiedGhAw ? "Copied Workflow!" : "Copy gh-aw Workflow"}
               </button>
             </div>
           </div>

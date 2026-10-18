@@ -277,6 +277,66 @@ async def check_repo_permission(
     }
 
 
+class TokenLoginRequest(BaseModel):
+    token: str
+
+
+@auth_router.post("/token-login")
+async def token_login(
+    payload: TokenLoginRequest,
+    response: Response,
+):
+    """
+    Direct authentic GitHub Personal Access Token (PAT) authentication.
+    Validates token with GitHub /user API, retrieves real identity, and sets session cookie.
+    """
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="GitHub Token is required.")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "GitOS-Defense-Engine/1.0",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://api.github.com/user", headers=headers)
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"GitHub token rejected (HTTP {resp.status_code}). Verify your PAT permissions.",
+                )
+            user_info = resp.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to communicate with GitHub API: {str(e)}",
+        )
+
+    session_id = create_session(user_info, token)
+    response.set_cookie(
+        key="gitos_session",
+        value=session_id,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=7 * 86400,
+        path="/",
+    )
+    return {
+        "status": "authenticated",
+        "user": {
+            "login": user_info.get("login"),
+            "name": user_info.get("name") or user_info.get("login"),
+            "avatar_url": user_info.get("avatar_url"),
+            "html_url": user_info.get("html_url"),
+        },
+    }
+
+
 @auth_router.post("/mock-login")
 async def mock_login(
     role: str = "maintainer",
