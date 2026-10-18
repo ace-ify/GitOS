@@ -167,6 +167,22 @@ const PRESET_SCENARIOS: Record<string, AnalysisData> = {
     risk_score: 82,
     verdict: "CRITICAL_BLAST",
     summary: "Modified APIRouter.add_api_route signature impacts 14 downstream callers across Python and TypeScript services with 0 regression tests added.",
+    maintainer_brief: "### 🛡️ Maintainer Executive Brief: fastapi/fastapi#9999\n**Verdict:** `CRITICAL_BLAST` | **Risk Score:** `82/100`\n\n**Key Risk Drivers:**\n- High downstream blast radius: 14 callers across 2 services (`fastapi/routing.py`, `src/gateway.ts`) impacted by signature mutation.\n- 0 unit tests provided for modified symbol `APIRouter.add_api_route`.\n- Architectural boundary violation flagged: cross-file router directly touches unverified gateway controller.\n\n**Recommended Action Plan:**\n1. Post sticky warning comment detailing affected downstream callers using 1-Click Action Pill.\n2. Request regression test coverage using the GitOS Test Stub Scaffolding generator.\n3. Block merge until AST signature backward compatibility is verified.",
+    reasoning_report: {
+      executive_verdict: "CRITICAL_BLAST — Request Regression Tests & Block Merge",
+      risk_drivers: [
+        "High downstream blast radius: 14 callers impacted across Python and TypeScript services",
+        "Zero regression tests provided for mutated core signature APIRouter.add_api_route",
+        "Architectural boundary rule violation flagged",
+      ],
+      action_plan: [
+        "Execute automated sticky comment with blast radius DAG report",
+        "Provide author with 1-click test stub scaffolding for pytest",
+        "Require backward compatibility signature verification before approval",
+      ],
+      contributor_guidance: "Please add regression tests verifying backward compatibility for APIRouter.add_api_route with existing kwargs.",
+      brief_markdown: "### 🛡️ Maintainer Executive Brief: fastapi/fastapi#9999\n**Verdict:** `CRITICAL_BLAST` | **Risk Score:** `82/100`\n\n**Key Risk Drivers:**\n- High downstream blast radius: 14 callers across 2 services (`fastapi/routing.py`, `src/gateway.ts`) impacted by signature mutation.\n- 0 unit tests provided for modified symbol `APIRouter.add_api_route`.\n- Architectural boundary violation flagged: cross-file router directly touches unverified gateway controller.\n\n**Recommended Action Plan:**\n1. Post sticky warning comment detailing affected downstream callers using 1-Click Action Pill.\n2. Request regression test coverage using the GitOS Test Stub Scaffolding generator.\n3. Block merge until AST signature backward compatibility is verified.",
+    },
     deterministic_checks: {
       untested_call_graph: {
         flagged: true,
@@ -1647,7 +1663,7 @@ export default function GitOSCommandCenter() {
                   </div>
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    <span>4 Agents Coordinated</span>
+                    <span>5 Agents Coordinated</span>
                   </div>
                 </div>
 
