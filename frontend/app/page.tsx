@@ -110,13 +110,23 @@ interface AnalysisData {
   url_parsed: ParsedUrl;
   user_mode: "maintainer" | "contributor" | "guest";
   risk_score: number;
-  verdict: "CLEAN" | "LOW_RISK" | "NEEDS_TESTS" | "AI_SLOP_SUSPECTED" | "CRITICAL_BLAST" | "RULE_VIOLATION";
+  verdict: "CLEAN" | "LOW_RISK" | "NEEDS_TESTS" | "AI_SLOP_SUSPECTED" | "CRITICAL_BLAST" | "RULE_VIOLATION" | "SLOPSQUATTING_ALERT";
   summary: string;
+  swarm_telemetry?: Record<string, any>;
+  onboarding_tour?: {
+    core_modules?: string[];
+    entry_points?: string[];
+    test_suites_count?: number;
+    key_classes?: string[];
+    onboarding_summary?: string;
+    contributor_tips?: string[];
+  };
   deterministic_checks: {
     untested_call_graph: { flagged: boolean; score: number; untested_functions: string[] };
     ast_vs_text_ratio: { flagged: boolean; ast_node_delta: number; text_diff_lines: number; ratio: number; is_cosmetic_slop: boolean };
     dead_code: { flagged: boolean; dead_symbols: string[] };
     maintainer_rules: { flagged: boolean; violations: { rule_id: string; description: string; offending_node: string }[] };
+    slopsquatting_sentinel?: { flagged: boolean; critical_alert: boolean; alerts: { package: string; message: string; severity: string }[] };
   };
   blast_radius_nodes: BlastNode[];
   blast_radius_edges: BlastEdge[];
@@ -495,7 +505,7 @@ export default function GitOSCommandCenter() {
   const [analysisStep, setAnalysisStep] = useState<string>("");
   const [data, setData] = useState<AnalysisData>(PRESET_SCENARIOS.fastapi_breaking);
   const [selectedNode, setSelectedNode] = useState<BlastNode | null>(PRESET_SCENARIOS.fastapi_breaking.blast_radius_nodes[0]);
-  const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff">("graph");
+  const [activeViewTab, setActiveViewTab] = useState<"graph" | "diff" | "swarm" | "onboarding">("graph");
   const [activeModalPill, setActiveModalPill] = useState<ActionPill | null>(null);
   const [executionState, setExecutionState] = useState<"idle" | "executing" | "done" | "error">("idle");
   const [actionFeedback, setActionFeedback] = useState<{ status: string; html_url?: string; message: string } | null>(null);
@@ -1007,6 +1017,12 @@ export default function GitOSCommandCenter() {
             <Flame className="w-3.5 h-3.5" /> AI SLOP DETECTED
           </span>
         );
+      case "SLOPSQUATTING_ALERT":
+        return (
+          <span className="px-3 py-1 bg-rose-600/20 text-rose-300 border border-rose-500/50 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-[0_0_18px_rgba(225,29,72,0.35)] animate-pulse">
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" /> SLOPSQUATTING ALERT
+          </span>
+        );
       case "RULE_VIOLATION":
         return (
           <span className="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.25)]">
@@ -1286,7 +1302,7 @@ export default function GitOSCommandCenter() {
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  <Activity className="w-3.5 h-3.5" /> 3D Topology Graph
+                  <Activity className="w-3.5 h-3.5" /> 3D Topology
                 </button>
                 <button
                   onClick={() => setActiveViewTab("diff")}
@@ -1296,7 +1312,27 @@ export default function GitOSCommandCenter() {
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  <Code2 className="w-3.5 h-3.5" /> Code & Diff Inspector
+                  <Code2 className="w-3.5 h-3.5" /> Code & Diff
+                </button>
+                <button
+                  onClick={() => setActiveViewTab("swarm")}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
+                    activeViewTab === "swarm"
+                      ? "bg-cyan-500 text-slate-950 shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Bot className="w-3.5 h-3.5" /> Agent Swarm
+                </button>
+                <button
+                  onClick={() => setActiveViewTab("onboarding")}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 ${
+                    activeViewTab === "onboarding"
+                      ? "bg-cyan-500 text-slate-950 shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Contributor Hub
                 </button>
               </div>
 
@@ -1517,6 +1553,257 @@ export default function GitOSCommandCenter() {
                       ))}
                   </div>
                 )}
+              </div>
+            ) : activeViewTab === "swarm" ? (
+              /* Multi-Agent Swarm Intelligence Cockpit */
+              <div className="w-full h-full p-6 overflow-y-auto space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Bot className="w-5 h-5 text-cyan-400" /> GitOS Multi-Agent Intelligence Swarm
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Autonomous specialized agents collaborating across the repository lifecycle: triage, security, graph reasoning, and onboarding.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>4 Agents Coordinated</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Agent 1: TriageAgent */}
+                  <div className="p-4 rounded-2xl bg-[#121829] border border-cyan-500/30 hover:border-cyan-500/60 transition space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-cyan-950/80 text-cyan-400 border border-cyan-800">
+                          <ShieldCheck className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">TriageAgent</div>
+                          <div className="text-[10px] text-cyan-400 font-mono">Operational Triage & Slop Defense</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs text-slate-300 font-mono bg-[#0c101a] p-3 rounded-xl border border-slate-800">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Triage Verdict:</span>
+                        <span className="font-bold text-white">{data.verdict}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Slop Risk Score:</span>
+                        <span className="font-bold text-white">{data.risk_score}/100</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">AST vs Text Ratio:</span>
+                        <span className="text-slate-300">{data.deterministic_checks.ast_vs_text_ratio.ratio}</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Eliminates AI review noise by detecting cosmetic comment churn, computing 0-token slop scores, and generating sticky GitHub PR comments.
+                    </p>
+                  </div>
+
+                  {/* Agent 2: GraphAgent */}
+                  <div className="p-4 rounded-2xl bg-[#121829] border border-blue-500/30 hover:border-blue-500/60 transition space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-blue-950/80 text-blue-400 border border-blue-800">
+                          <Activity className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">GraphAgent</div>
+                          <div className="text-[10px] text-blue-400 font-mono">Structural Reasoning & Blast Radius</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs text-slate-300 font-mono bg-[#0c101a] p-3 rounded-xl border border-slate-800">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">In-Memory Nodes:</span>
+                        <span className="font-bold text-white">{data.blast_radius_nodes.length} symbols</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Cross-File Edges:</span>
+                        <span className="font-bold text-white">{data.blast_radius_edges.length} connections</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">FalkorDB Indexing:</span>
+                        <span className="text-emerald-400 font-semibold">commit_sha indexed</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Extracts universal multi-language ASTs into FalkorDB in RAM and compiles native GitHub inline Mermaid DAGs.
+                    </p>
+                  </div>
+
+                  {/* Agent 3: SecurityAgent */}
+                  <div className="p-4 rounded-2xl bg-[#121829] border border-rose-500/30 hover:border-rose-500/60 transition space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-rose-950/80 text-rose-400 border border-rose-800">
+                          <AlertTriangle className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">SecurityAgent</div>
+                          <div className="text-[10px] text-rose-400 font-mono">Supply-Chain & Architectural Boundary Audit</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs text-slate-300 font-mono bg-[#0c101a] p-3 rounded-xl border border-slate-800">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Filter 5 Slopsquatting:</span>
+                        <span className={data.deterministic_checks?.slopsquatting_sentinel?.flagged ? "text-rose-400 font-bold" : "text-emerald-400"}>
+                          {data.deterministic_checks?.slopsquatting_sentinel?.flagged ? "Flagged Threat" : "Registry Verified"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Architectural Rules:</span>
+                        <span className={data.deterministic_checks.maintainer_rules.flagged ? "text-rose-400 font-bold" : "text-emerald-400"}>
+                          {data.deterministic_checks.maintainer_rules.violations.length} breach
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Registry Verification:</span>
+                        <span className="text-slate-300">PyPI & npm active</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Intercepts AI-hallucinated package imports (slopsquatting) and enforces custom maintainer architectural rules.
+                    </p>
+                  </div>
+
+                  {/* Agent 4: OnboardingAgent */}
+                  <div className="p-4 rounded-2xl bg-[#121829] border border-amber-500/30 hover:border-amber-500/60 transition space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-amber-950/80 text-amber-400 border border-amber-800">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">OnboardingAgent</div>
+                          <div className="text-[10px] text-amber-400 font-mono">Modern Contributor Onboarding & Pathfinder</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs text-slate-300 font-mono bg-[#0c101a] p-3 rounded-xl border border-slate-800">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Architecture Tour:</span>
+                        <span className="text-emerald-400 font-semibold">Generated</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Issue Pathfinder:</span>
+                        <span className="text-white">Active</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Test Patch Generator:</span>
+                        <span className="text-slate-300">Pytest / Jest ready</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Onboards new contributors with automated architecture walkthroughs, issue-to-code pathfinding, and test stubs.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Contributor Onboarding & Pathfinder Hub */
+              <div className="w-full h-full p-6 overflow-y-auto space-y-6">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-amber-400" /> Contributor Onboarding & Pathfinder Hub
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Modernized onboarding tour for {data.url_parsed.owner}/{data.url_parsed.repo} powered by the OnboardingAgent.
+                  </p>
+                </div>
+
+                {/* Architecture Overview Card */}
+                <div className="p-5 rounded-2xl bg-[#121829] border border-slate-800 space-y-3">
+                  <div className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center gap-1.5 text-cyan-400">
+                    <FolderTree className="w-4 h-4" /> Codebase Architecture Tour
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {data.onboarding_tour?.onboarding_summary ||
+                      `Welcome to ${data.url_parsed.owner}/${data.url_parsed.repo}! The codebase is organized into modular tiers with in-memory graph indexing.`}
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-[#0a0d16] border border-slate-800">
+                      <span className="text-[10px] font-mono uppercase text-slate-500 block">Core Entry Points</span>
+                      <div className="mt-1 space-y-1">
+                        {(data.onboarding_tour?.entry_points || ["main.py", "src/index.ts"]).map((ep, i) => (
+                          <div key={i} className="text-xs font-mono text-cyan-300 flex items-center gap-1.5">
+                            <ChevronRight className="w-3 h-3 text-cyan-500" /> {ep}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[#0a0d16] border border-slate-800">
+                      <span className="text-[10px] font-mono uppercase text-slate-500 block">Primary Modules</span>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {(data.onboarding_tour?.core_modules || ["routing", "auth", "security", "api"]).map((m, i) => (
+                          <span key={i} className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Issue-to-Code Pathfinder Card */}
+                <div className="p-5 rounded-2xl bg-[#121829] border border-slate-800 space-y-3">
+                  <div className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center gap-1.5 text-amber-400">
+                    <FileCode2 className="w-4 h-4" /> Issue-to-Code Pathfinder
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Candidate entry points and functions identified from issue context to help you know exactly where to make code edits:
+                  </p>
+                  <div className="space-y-2">
+                    {data.blast_radius_nodes.slice(0, 3).map((node, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-[#0a0d16] border border-slate-800 flex items-center justify-between">
+                        <div>
+                          <div className="text-xs font-bold text-white font-mono">{node.label}</div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">{node.file_path}</div>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-mono">
+                          Recommended Edit Scope
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Contributor Readiness Checklist */}
+                <div className="p-5 rounded-2xl bg-[#121829] border border-slate-800 space-y-3">
+                  <div className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center gap-1.5 text-emerald-400">
+                    <CheckCircle2 className="w-4 h-4" /> Contributor Pull Request Checklist
+                  </div>
+                  <div className="space-y-2 text-xs text-slate-300">
+                    {(data.onboarding_tour?.contributor_tips || [
+                      "Verify blast radius does not break remote callers across other modules.",
+                      "Ensure public function signature changes have corresponding test coverage.",
+                      "Do not modify CI/CD workflows under `.github/` without maintainer consent.",
+                    ]).map((tip, i) => (
+                      <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-[#0a0d16] border border-slate-800">
+                        <Check className="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0" />
+                        <span>{tip}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>

@@ -219,6 +219,50 @@ class TestHunkMatchingAndActions(unittest.TestCase):
         self.assertEqual(data["status"], "success")
         self.assertIn(data["verdict"], ["AI_SLOP_SUSPECTED", "LOW_RISK", "CLEAN"])
 
+    def test_agent_swarm_status(self):
+        resp = self.client.get("/api/agents/swarm")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["orchestrator"], "GitOSOrchestrator")
+        self.assertEqual(len(data["agents"]), 4)
+        agent_ids = [a["id"] for a in data["agents"]]
+        self.assertIn("triage_agent", agent_ids)
+        self.assertIn("graph_agent", agent_ids)
+        self.assertIn("security_agent", agent_ids)
+        self.assertIn("onboarding_agent", agent_ids)
+
+    def test_onboarding_tour_endpoint(self):
+        resp = self.client.post(
+            "/api/onboarding/tour",
+            json={"repo_url": "https://github.com/fastapi/fastapi"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("onboarding_tour", data)
+        tour = data["onboarding_tour"]
+        self.assertIn("core_modules", tour)
+        self.assertIn("contributor_tips", tour)
+        self.assertIn("entry_points", tour)
+
+    def test_onboarding_agent_pathfinder(self):
+        from backend.agents.onboarding_agent import OnboardingAgent
+        agent = OnboardingAgent()
+        nodes = [
+            {"id": "routing.py::APIRouter.add_api_route", "label": "add_api_route", "file_path": "routing.py", "type": "function"},
+            {"id": "auth.py::verify_token", "label": "verify_token", "file_path": "auth.py", "type": "function"},
+        ]
+        res = agent.pathfind_issue_to_code(
+            issue_title="Error in routing when adding api route",
+            issue_body="Calling add_api_route throws KeyError",
+            ast_nodes=nodes,
+            file_paths=["routing.py", "auth.py"],
+        )
+        self.assertEqual(res["status"], "completed")
+        self.assertGreater(len(res["candidate_entrypoints"]), 0)
+        self.assertEqual(res["candidate_entrypoints"][0]["label"], "add_api_route")
+
 
 if __name__ == "__main__":
     unittest.main()
+
