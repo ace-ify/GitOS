@@ -1437,7 +1437,7 @@ export default function GitOSCommandCenter() {
                   </div>
                 )}
               </div>
-            ) : (
+            ) : activeViewTab === "diff" ? (
               /* Code & Diff Inspector */
               <div className="w-full h-full p-4 overflow-y-auto font-mono text-xs space-y-4">
                 {/* Symbol & File Target Header */}
