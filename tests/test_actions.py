@@ -224,12 +224,79 @@ class TestHunkMatchingAndActions(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["orchestrator"], "GitOSOrchestrator")
-        self.assertEqual(len(data["agents"]), 4)
+        self.assertEqual(len(data["agents"]), 5)
         agent_ids = [a["id"] for a in data["agents"]]
         self.assertIn("triage_agent", agent_ids)
         self.assertIn("graph_agent", agent_ids)
         self.assertIn("security_agent", agent_ids)
         self.assertIn("onboarding_agent", agent_ids)
+        self.assertIn("reasoning_agent", agent_ids)
+
+    def test_security_sinks_detection(self):
+        from backend.polyglot import scan_patch_security_sinks
+        patch = """@@ -1,3 +1,5 @@
+ def execute_cmd(user_arg):
++    import subprocess
++    subprocess.Popen(f"ls {user_arg}", shell=True)
++    eval(user_arg)
+"""
+        sinks = scan_patch_security_sinks(patch)
+        self.assertGreaterEqual(len(sinks), 2)
+        sink_types = [s["type"] for s in sinks]
+        self.assertIn("COMMAND_INJECTION", sink_types)
+        self.assertIn("CODE_INJECTION", sink_types)
+
+    def test_generate_test_stub_endpoint(self):
+        resp = self.client.post(
+            "/api/generate-test-stub",
+            json={
+                "symbol_name": "APIRouter.add_api_route",
+                "file_path": "fastapi/routing.py",
+                "language": "python",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("pytest", data["framework"])
+        self.assertIn("test_add_api_route", data["test_code"])
+
+    def test_mcp_generate_test_stub(self):
+        resp = self.client.post(
+            "/mcp/generate-test-stub",
+            json={
+                "symbol_name": "formatQuery",
+                "file_path": "src/utils/query.ts",
+                "language": "typescript",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("vitest", data["framework"])
+        self.assertIn("describe", data["test_code"])
+
+    def test_reasoning_agent_synthesis(self):
+        from backend.agents.reasoning_agent import ReasoningAgent
+        agent = ReasoningAgent()
+        report = agent.synthesize_maintainer_brief(
+            repo_id="owner/repo",
+            pr_id="42",
+            verdict="NEEDS_TESTS",
+            risk_score=50,
+            modified_functions=["core.py::process_payment"],
+            untested_callers=["core.py::process_payment"],
+            dependency_alerts=[],
+            rule_violations=[],
+            security_sinks=[],
+            is_cosmetic_slop=False,
+            ast_vs_text_ratio=0.8,
+            dead_code_symbols=[],
+        )
+        self.assertEqual(report["status"], "completed")
+        self.assertIn("Maintainer Brief", report["brief_markdown"])
+        self.assertIn("TESTING GAP", report["executive_verdict"])
+        self.assertGreater(len(report["action_plan"]), 0)
 
     def test_onboarding_tour_endpoint(self):
         resp = self.client.post(

@@ -110,8 +110,16 @@ interface AnalysisData {
   url_parsed: ParsedUrl;
   user_mode: "maintainer" | "contributor" | "guest";
   risk_score: number;
-  verdict: "CLEAN" | "LOW_RISK" | "NEEDS_TESTS" | "AI_SLOP_SUSPECTED" | "CRITICAL_BLAST" | "RULE_VIOLATION" | "SLOPSQUATTING_ALERT";
+  verdict: "CLEAN" | "LOW_RISK" | "NEEDS_TESTS" | "AI_SLOP_SUSPECTED" | "CRITICAL_BLAST" | "RULE_VIOLATION" | "SLOPSQUATTING_ALERT" | "SECURITY_SINK_ALERT";
   summary: string;
+  maintainer_brief?: string;
+  reasoning_report?: {
+    executive_verdict?: string;
+    risk_drivers?: string[];
+    action_plan?: string[];
+    contributor_guidance?: string;
+    brief_markdown?: string;
+  };
   swarm_telemetry?: Record<string, any>;
   onboarding_tour?: {
     core_modules?: string[];
@@ -127,6 +135,7 @@ interface AnalysisData {
     dead_code: { flagged: boolean; dead_symbols: string[] };
     maintainer_rules: { flagged: boolean; violations: { rule_id: string; description: string; offending_node: string }[] };
     slopsquatting_sentinel?: { flagged: boolean; critical_alert: boolean; alerts: { package: string; message: string; severity: string }[] };
+    security_sinks?: { flagged: boolean; critical_alert: boolean; sinks: { rule_id: string; type: string; severity: string; description: string; remediation: string; line_number: number; offending_line: string }[] };
   };
   blast_radius_nodes: BlastNode[];
   blast_radius_edges: BlastEdge[];
@@ -541,6 +550,76 @@ export default function GitOSCommandCenter() {
   const [newRuleName, setNewRuleName] = useState("");
   const [newRulePattern, setNewRulePattern] = useState("");
   const [newRuleDesc, setNewRuleDesc] = useState("");
+
+  // 1-Click Test Stub Scaffolding State
+  const [testStubModal, setTestStubModal] = useState<{
+    isOpen: boolean;
+    symbolName: string;
+    filePath: string;
+    language: string;
+    framework: string;
+    testCode: string;
+    suggestedPath: string;
+    isLoading: boolean;
+  }>({
+    isOpen: false,
+    symbolName: "",
+    filePath: "",
+    language: "python",
+    framework: "pytest",
+    testCode: "",
+    suggestedPath: "",
+    isLoading: false,
+  });
+  const [copiedTestStub, setCopiedTestStub] = useState(false);
+
+  const handleGenerateTestStub = async (symbolName: string, filePath?: string) => {
+    const targetFile = filePath || (data.blast_radius_nodes[0]?.file_path || "main.py");
+    setTestStubModal({
+      isOpen: true,
+      symbolName,
+      filePath: targetFile,
+      language: targetFile.endsWith(".ts") || targetFile.endsWith(".js") ? "typescript" : "python",
+      framework: targetFile.endsWith(".ts") || targetFile.endsWith(".js") ? "vitest" : "pytest",
+      testCode: "",
+      suggestedPath: "",
+      isLoading: true,
+    });
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/generate-test-stub`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol_name: symbolName,
+          file_path: targetFile,
+          language: targetFile.endsWith(".ts") || targetFile.endsWith(".js") ? "typescript" : "python",
+        }),
+      });
+      if (res.ok) {
+        const stubData = await res.json();
+        setTestStubModal((prev) => ({
+          ...prev,
+          isLoading: false,
+          framework: stubData.framework,
+          testCode: stubData.test_code,
+          suggestedPath: stubData.suggested_test_file,
+          language: stubData.language,
+        }));
+      } else {
+        setTestStubModal((prev) => ({
+          ...prev,
+          isLoading: false,
+          testCode: "# Error: Backend returned an error generating test stub.",
+        }));
+      }
+    } catch (e) {
+      setTestStubModal((prev) => ({
+        ...prev,
+        isLoading: false,
+        testCode: `# Network error: ${e}`,
+      }));
+    }
+  };
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const nodePhysicsRef = useRef<Array<BlastNode & { x: number; y: number; vx: number; vy: number }>>([]);
@@ -1667,6 +1746,14 @@ export default function GitOSCommandCenter() {
                         </span>
                       </div>
                       <div className="flex justify-between">
+                        <span className="text-slate-500">AST Security Sinks:</span>
+                        <span className={data.deterministic_checks?.security_sinks?.flagged ? "text-rose-400 font-bold" : "text-emerald-400"}>
+                          {data.deterministic_checks?.security_sinks?.flagged
+                            ? `${data.deterministic_checks.security_sinks.sinks.length} Sinks Flagged`
+                            : "Clean (0 Sinks)"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
                         <span className="text-slate-500">Architectural Rules:</span>
                         <span className={data.deterministic_checks.maintainer_rules.flagged ? "text-rose-400 font-bold" : "text-emerald-400"}>
                           {data.deterministic_checks.maintainer_rules.violations.length} breach
@@ -1678,7 +1765,7 @@ export default function GitOSCommandCenter() {
                       </div>
                     </div>
                     <p className="text-[11px] text-slate-400">
-                      Intercepts AI-hallucinated package imports (slopsquatting) and enforces custom maintainer architectural rules.
+                      Intercepts AI-hallucinated package imports, command injection sinks, and enforces architectural boundaries.
                     </p>
                   </div>
 
@@ -1708,15 +1795,62 @@ export default function GitOSCommandCenter() {
                         <span className="text-white">Active</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-500">Test Patch Generator:</span>
-                        <span className="text-slate-300">Pytest / Jest ready</span>
+                        <span className="text-slate-500">Test Stub Generator:</span>
+                        <span className="text-cyan-400 font-semibold">1-Click Scaffolding</span>
                       </div>
                     </div>
                     <p className="text-[11px] text-slate-400">
                       Onboards new contributors with automated architecture walkthroughs, issue-to-code pathfinding, and test stubs.
                     </p>
                   </div>
+
+                  {/* Agent 5: ReasoningAgent */}
+                  <div className="p-4 rounded-2xl bg-[#121829] border border-purple-500/30 hover:border-purple-500/60 transition space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-purple-950/80 text-purple-400 border border-purple-800">
+                          <Cpu className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">ReasoningAgent</div>
+                          <div className="text-[10px] text-purple-400 font-mono">Autonomous Maintainer Reasoning & Synthesis</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="space-y-1.5 text-xs text-slate-300 font-mono bg-[#0c101a] p-3 rounded-xl border border-slate-800">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Executive Verdict:</span>
+                        <span className="text-purple-300 font-semibold truncate max-w-[200px]">{data.reasoning_report?.executive_verdict || data.verdict}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Risk Drivers:</span>
+                        <span className="text-white">{data.reasoning_report?.risk_drivers?.length || 1} identified</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Maintainer Action Plan:</span>
+                        <span className="text-emerald-400 font-semibold">{data.reasoning_report?.action_plan?.length || 2} steps generated</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Synthesizes multi-agent graph metrics, security alerts, and diff heuristics into an authoritative maintainer review brief.
+                    </p>
+                  </div>
                 </div>
+
+                {/* Autonomous Maintainer Brief */}
+                {(data.maintainer_brief || data.reasoning_report?.brief_markdown) && (
+                  <div className="p-5 rounded-2xl bg-[#0f1424] border border-purple-500/30 space-y-3 shadow-xl">
+                    <div className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center gap-2 text-purple-400">
+                      <Cpu className="w-4 h-4" /> Autonomous Maintainer Review Rationale
+                    </div>
+                    <div className="text-xs text-slate-300 whitespace-pre-wrap font-sans bg-[#090d16] p-4 rounded-xl border border-slate-800 leading-relaxed font-mono">
+                      {data.maintainer_brief || data.reasoning_report?.brief_markdown}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               /* Contributor Onboarding & Pathfinder Hub */
@@ -1781,6 +1915,35 @@ export default function GitOSCommandCenter() {
                         <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-mono">
                           Recommended Edit Scope
                         </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 1-Click Test Stub Generator Card */}
+                <div className="p-5 rounded-2xl bg-[#121829] border border-cyan-500/30 space-y-3">
+                  <div className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center justify-between text-cyan-400">
+                    <span className="flex items-center gap-1.5">
+                      <Code2 className="w-4 h-4" /> ⚡ 1-Click Test Stub Generator
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">pytest / vitest / go test</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    GitOS automatically compiles ready-to-run test fixtures for any modified or candidate function so contributors can verify coverage before opening a PR:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {data.blast_radius_nodes.slice(0, 4).map((node, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-[#0a0d16] border border-slate-800 flex items-center justify-between">
+                        <div className="truncate mr-2">
+                          <div className="text-xs font-bold text-white font-mono truncate">{node.label}</div>
+                          <div className="text-[10px] text-slate-500 font-mono truncate">{node.file_path || "main.py"}</div>
+                        </div>
+                        <button
+                          onClick={() => handleGenerateTestStub(node.id, node.file_path)}
+                          className="px-2.5 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[11px] font-mono transition flex items-center gap-1 shrink-0 shadow-sm"
+                        >
+                          <Play className="w-3 h-3" /> Scaffold
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -2334,6 +2497,91 @@ export default function GitOSCommandCenter() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 1-Click Test Stub Scaffolding Modal */}
+      {testStubModal.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f1424] border border-cyan-500/40 rounded-2xl p-6 max-w-2xl w-full space-y-4 shadow-2xl text-left">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-cyan-950/80 text-cyan-400 border border-cyan-800">
+                  <Code2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    1-Click Test Stub Scaffolding
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                      {testStubModal.framework}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Target: {testStubModal.filePath} &rarr; <span className="text-cyan-400 font-semibold">{testStubModal.suggestedPath || "tests/test_target.py"}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setTestStubModal((prev) => ({ ...prev, isOpen: false }))}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {testStubModal.isLoading ? (
+              <div className="py-12 flex flex-col items-center justify-center space-y-3">
+                <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs text-slate-400 font-mono animate-pulse">
+                  Synthesizing AST regression fixture for {testStubModal.symbolName}...
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
+                  <span>Symbol: <strong className="text-white">{testStubModal.symbolName}</strong></span>
+                  <button
+                    onClick={() => {
+                      if (testStubModal.testCode) {
+                        navigator.clipboard.writeText(testStubModal.testCode);
+                        setCopiedTestStub(true);
+                        setTimeout(() => setCopiedTestStub(false), 2000);
+                      }
+                    }}
+                    className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition flex items-center gap-1.5 ${
+                      copiedTestStub
+                        ? "bg-emerald-500 text-slate-950 shadow-[0_0_12px_#10b981]"
+                        : "bg-cyan-500 hover:bg-cyan-400 text-slate-950"
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    {copiedTestStub ? "Copied to Clipboard!" : "Copy Test Fixture"}
+                  </button>
+                </div>
+
+                <div className="relative bg-[#07090e] border border-slate-800 rounded-xl p-4 font-mono text-xs text-cyan-300 max-h-80 overflow-y-auto whitespace-pre selection:bg-cyan-500/30 selection:text-white">
+                  {testStubModal.testCode || "# No test code generated."}
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 flex items-start gap-2">
+                  <span className="text-cyan-400 font-bold shrink-0">PRO TIP:</span>
+                  <span>
+                    Paste this fixture into <code className="text-cyan-300">{testStubModal.suggestedPath}</code> and run <code className="text-cyan-300">{testStubModal.framework === "pytest" ? "pytest -v" : "npm test"}</code> locally before submitting your pull request.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setTestStubModal((prev) => ({ ...prev, isOpen: false }))}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copy backend and graph packages
 COPY backend/ /app/backend/
 COPY graph/ /app/graph/
+COPY tests/ /app/tests/
 
 ENV PYTHONPATH=/app
 ENV FALKORDB_HOST=falkordb

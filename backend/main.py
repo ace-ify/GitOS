@@ -56,6 +56,8 @@ from backend.polyglot import (
     is_node_modified_by_patch,
     extract_patch_new_imports,
     audit_dependency_risks,
+    scan_patch_security_sinks,
+    generate_test_stub_for_symbol,
 )
 from backend.github_client import get_github_client, EXCLUDED_EXTENSIONS
 from backend.compressor import get_groq_reasoner
@@ -338,15 +340,20 @@ def run_deterministic_filters(
     text_diff_lines: int,
     file_paths: List[str],
     dependency_alerts: Optional[List[Dict[str, Any]]] = None,
+    security_sinks: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    parsed_project_files: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Executes the 5 hard graph filters without spending LLM tokens:
     1. Untested Callers
     2. AST vs Text Ratio (Cosmetic Slop)
-    3. Dead Code Injection
-    4. Maintainer Architectural Rules
-    5. Slopsquatting & Hallucinated Dependency Sentinel
+    3. Dead Code Injection (Verified via in-degree)
+    4. Maintainer Architectural Rules (Cross-module boundary leaks)
+    5. Slopsquatting & Hallucinated Dependency Sentinel + AST Security Sinks
     """
+    orchestrator = get_orchestrator(graph_client=graph_client, maintainer_rules=CUSTOM_MAINTAINER_RULES)
+
     if graph_client:
         untested_check = graph_client.check_untested_callers(
             repo_id, commit_sha, modified_functions, modified_tests
@@ -361,19 +368,27 @@ def run_deterministic_filters(
             "score": 0.85 if len(modified_functions) > 0 and len(modified_tests) == 0 else 0.1,
             "untested_functions": modified_functions,
         }
-        dead_code_symbols = [fn for fn in new_functions if not fn.startswith("test_")]
+        if edges:
+            called_targets = {e.get("target") for e in edges if e.get("relationship") == "CALLS"}
+            dead_code_symbols = [
+                fn for fn in new_functions
+                if fn not in called_targets
+                and not fn.split("::")[-1].startswith(("test_", "__", "main", "handler"))
+            ]
+        else:
+            # When graph edges are absent, don't penalize unless functions are explicitly uncalled
+            dead_code_symbols = []
         violations = []
 
-    # Check custom maintainer rules against modified files
-    for rule in CUSTOM_MAINTAINER_RULES:
-        if rule["rule_id"] == "RULE_NO_WORKFLOW_TOUCH_GUEST":
-            for f in file_paths:
-                if ".github/workflows" in f:
-                    violations.append({
-                        "rule_id": rule["rule_id"],
-                        "description": rule["description"],
-                        "offending_node": f,
-                    })
+    # Run SecurityAgent's deep architectural rule evaluation (boundary leaks, workflows, etc.)
+    agent_violations = orchestrator.security_agent.check_architectural_rules(
+        modified_files=file_paths,
+        edges=edges,
+        parsed_files=parsed_project_files,
+    )
+    for v in agent_violations:
+        if not any(existing.get("offending_node") == v.get("offending_node") for existing in violations):
+            violations.append(v)
 
     # Filter 2: AST vs Text Diff Ratio (Cosmetic AI Slop)
     ratio = (ast_delta / max(text_diff_lines, 1))
@@ -383,24 +398,34 @@ def run_deterministic_filters(
     dep_alerts = dependency_alerts or []
     has_critical_dep_alerts = any(a.get("severity") == "CRITICAL" for a in dep_alerts)
 
+    # AST & Code Security Sinks
+    sinks = security_sinks or []
+    has_critical_sinks = any(s.get("severity") == "CRITICAL" for s in sinks)
+
     # Compute Composite Risk Score (0 - 100)
     risk_score = 10
     if untested_check["flagged"]:
-        risk_score += int(untested_check["score"] * 40)
+        risk_score += int(untested_check["score"] * 35)
     if is_cosmetic_slop:
         risk_score += 45
     if len(dead_code_symbols) > 0:
-        risk_score += 30
+        risk_score += min(len(dead_code_symbols) * 15, 30)
     if len(violations) > 0:
         risk_score += 50
     if has_critical_dep_alerts:
         risk_score += 60
     elif len(dep_alerts) > 0:
         risk_score += 20
+    if has_critical_sinks:
+        risk_score += 65
+    elif len(sinks) > 0:
+        risk_score += 25
     risk_score = min(risk_score, 100)
 
-    # Determine Verdict
-    if has_critical_dep_alerts:
+    # Determine Verdict with Security Precedence
+    if has_critical_sinks:
+        verdict = "SECURITY_SINK_ALERT"
+    elif has_critical_dep_alerts:
         verdict = "SLOPSQUATTING_ALERT"
     elif len(violations) > 0:
         verdict = "RULE_VIOLATION"
@@ -439,6 +464,11 @@ def run_deterministic_filters(
                 "flagged": len(dep_alerts) > 0,
                 "critical_alert": has_critical_dep_alerts,
                 "alerts": dep_alerts,
+            },
+            "security_sinks": {
+                "flagged": len(sinks) > 0,
+                "critical_alert": has_critical_sinks,
+                "sinks": sinks,
             },
         },
     }
@@ -751,6 +781,9 @@ export class GatewayController {
     else:
         blast = {"nodes": all_nodes, "edges": stitched_edges}
 
+    # Scan AST security sinks in suggested_diff if available
+    security_sinks = scan_patch_security_sinks(suggested_diff) if suggested_diff else []
+
     # 5. Run the 5 Deterministic Pre-Filters (0 LLM Tokens)
     if parsed_url["url_type"] == "repo":
         filter_results = {
@@ -768,6 +801,7 @@ export class GatewayController {
                 "dead_code": {"flagged": False, "dead_symbols": []},
                 "maintainer_rules": {"flagged": False, "violations": []},
                 "slopsquatting_sentinel": {"flagged": False, "critical_alert": False, "alerts": []},
+                "security_sinks": {"flagged": False, "critical_alert": False, "sinks": []},
             },
         }
     else:
@@ -781,6 +815,9 @@ export class GatewayController {
             text_diff_lines=text_diff_lines,
             file_paths=file_paths,
             dependency_alerts=dependency_alerts,
+            security_sinks=security_sinks,
+            edges=stitched_edges,
+            parsed_project_files=parsed_project_files,
         )
 
     # Action Pills
@@ -799,6 +836,7 @@ export class GatewayController {
                 "edges": blast.get("edges", stitched_edges),
                 "untested_callers": modified_functions,
                 "slopsquatting_alerts": dependency_alerts,
+                "security_sinks": security_sinks,
             },
         },
         {
@@ -810,6 +848,20 @@ export class GatewayController {
             "payload": {},
         },
     ]
+
+    if filter_results["deterministic_checks"]["untested_call_graph"]["flagged"] or modified_functions:
+        action_pills.append({
+            "id": "pill_scaffold_test_stub",
+            "label": "1-Click Scaffold Tests",
+            "action_type": "scaffold_test",
+            "is_destructive": False,
+            "description": f"Generate executable unit test fixtures for {modified_functions[0] if modified_functions else 'modified functions'}.",
+            "payload": {
+                "symbol_name": modified_functions[0] if modified_functions else "target_func",
+                "file_path": file_paths[0] if file_paths else "main.py",
+                "language": detect_language(file_paths[0] if file_paths else "main.py"),
+            },
+        })
 
     if any(a.get("severity") == "CRITICAL" for a in dependency_alerts):
         action_pills.append({
@@ -892,6 +944,22 @@ export class GatewayController {
         file_tree=all_repo_file_paths if all_repo_file_paths else file_paths,
         ast_nodes=all_nodes,
     )
+    # Run ReasoningAgent to synthesize rich maintainer brief
+    reasoning_report = orchestrator.reasoning_agent.synthesize_maintainer_brief(
+        repo_id=repo_id,
+        pr_id=parsed_url.get("target_id"),
+        verdict=filter_results["verdict"],
+        risk_score=filter_results["risk_score"],
+        modified_functions=modified_functions,
+        untested_callers=modified_functions if filter_results["deterministic_checks"]["untested_call_graph"]["flagged"] else [],
+        dependency_alerts=dependency_alerts,
+        rule_violations=filter_results["deterministic_checks"]["maintainer_rules"].get("violations", []),
+        security_sinks=security_sinks,
+        is_cosmetic_slop=filter_results["deterministic_checks"]["ast_vs_text_ratio"]["flagged"],
+        ast_vs_text_ratio=filter_results["deterministic_checks"]["ast_vs_text_ratio"]["ratio"],
+        dead_code_symbols=filter_results["deterministic_checks"]["dead_code"].get("dead_symbols", []),
+    )
+
     swarm_telemetry = {
         "triage_agent": {
             "name": "TriageAgent",
@@ -915,10 +983,11 @@ export class GatewayController {
             "name": "SecurityAgent",
             "role": "Supply-Chain & Architectural Boundary Audit",
             "status": "active",
-            "passed": not any(a.get("severity") == "CRITICAL" for a in dependency_alerts) and not filter_results["deterministic_checks"]["maintainer_rules"]["flagged"],
-            "threats_count": len(dependency_alerts) + len(filter_results["deterministic_checks"]["maintainer_rules"].get("violations", [])),
+            "passed": not any(a.get("severity") == "CRITICAL" for a in dependency_alerts) and not any(s.get("severity") == "CRITICAL" for s in security_sinks) and not filter_results["deterministic_checks"]["maintainer_rules"]["flagged"],
+            "threats_count": len(dependency_alerts) + len(filter_results["deterministic_checks"]["maintainer_rules"].get("violations", [])) + len(security_sinks),
             "slopsquatting_alerts": dependency_alerts,
             "rule_violations": filter_results["deterministic_checks"]["maintainer_rules"].get("violations", []),
+            "security_sinks": security_sinks,
         },
         "onboarding_agent": {
             "name": "OnboardingAgent",
@@ -929,6 +998,14 @@ export class GatewayController {
             "contributor_tips": onboarding_tour["contributor_tips"],
             "onboarding_summary": onboarding_tour["onboarding_summary"],
         },
+        "reasoning_agent": {
+            "name": "ReasoningAgent",
+            "role": "Autonomous Maintainer Reasoning & Synthesis",
+            "status": "active",
+            "executive_verdict": reasoning_report["executive_verdict"],
+            "risk_drivers": reasoning_report["risk_drivers"],
+            "action_plan": reasoning_report["action_plan"],
+        },
     }
 
     response_payload = {
@@ -938,6 +1015,8 @@ export class GatewayController {
         "risk_score": filter_results["risk_score"],
         "verdict": filter_results["verdict"],
         "summary": "",
+        "maintainer_brief": reasoning_report["brief_markdown"],
+        "reasoning_report": reasoning_report,
         "swarm_telemetry": swarm_telemetry,
         "onboarding_tour": onboarding_tour,
         "deterministic_checks": filter_results["deterministic_checks"],
@@ -1029,8 +1108,40 @@ async def get_agent_swarm_status():
                     "Backward-compatible unit test stub synthesis",
                 ],
             },
+            {
+                "id": "reasoning_agent",
+                "name": orchestrator.reasoning_agent.agent_name,
+                "role": orchestrator.reasoning_agent.role,
+                "responsibilities": [
+                    "Autonomous maintainer review brief synthesis",
+                    "Multi-agent consensus and composite risk driver explanation",
+                    "Zero-token deterministic chain-of-thought rationale",
+                    "Actionable step-by-step review instructions",
+                ],
+            },
         ],
     }
+
+
+class GenerateTestStubRequest(BaseModel):
+    symbol_name: str = Field(..., description="Function or class symbol name (e.g. 'Session.send')")
+    file_path: str = Field(..., description="Source file path (e.g. 'src/requests/sessions.py')")
+    language: Optional[str] = Field("python", description="'python', 'typescript', 'javascript', 'go'")
+    signature_hint: Optional[str] = Field(None, description="Optional signature line or docstring hint")
+
+
+@app.post("/api/generate-test-stub")
+async def generate_test_stub_endpoint(req: GenerateTestStubRequest):
+    """
+    Generates ready-to-run unit test scaffolding for untested or modified functions.
+    Supports pytest, vitest, and go test formats with fixture setup.
+    """
+    return generate_test_stub_for_symbol(
+        symbol_name=req.symbol_name,
+        file_path=req.file_path,
+        language=req.language or "python",
+        signature_hint=req.signature_hint,
+    )
 
 
 class OnboardingTourRequest(BaseModel):
@@ -1238,8 +1349,37 @@ async def list_mcp_tools():
                     "required": ["patch"],
                 },
             },
+            {
+                "name": "gitos_generate_test_stub",
+                "description": "Generate production-ready, executable unit test scaffolding (pytest, vitest, go test) for untested functions in a PR or repo.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "symbol_name": {"type": "string", "description": "Symbol to test (e.g. 'Session.send')"},
+                        "file_path": {"type": "string", "description": "Path to file containing symbol"},
+                        "language": {"type": "string", "enum": ["python", "javascript", "typescript", "go", "generic"]},
+                    },
+                    "required": ["symbol_name", "file_path"],
+                },
+            },
         ]
     }
+
+
+class MCPTestStubRequest(BaseModel):
+    symbol_name: str
+    file_path: str
+    language: Optional[str] = "python"
+
+
+@app.post("/mcp/generate-test-stub")
+async def mcp_generate_test_stub(req: MCPTestStubRequest):
+    """MCP endpoint: Generates test scaffolding for IDE agents."""
+    return generate_test_stub_for_symbol(
+        symbol_name=req.symbol_name,
+        file_path=req.file_path,
+        language=req.language or "python",
+    )
 
 
 @app.post("/mcp/blast-radius")
@@ -1265,7 +1405,7 @@ async def mcp_blast_radius(req: MCPBlastRadiusRequest):
 
 @app.post("/mcp/slop-check")
 async def mcp_slop_check(req: MCPSlopCheckRequest):
-    """MCP endpoint: Runs deterministic slop and slopsquatting audit."""
+    """MCP endpoint: Runs deterministic slop, security sinks, and slopsquatting audit."""
     modified_lines = parse_patch_modified_lines(req.patch)
     text_lines = len(req.patch.splitlines())
     ast_delta = len(modified_lines)
@@ -1276,17 +1416,27 @@ async def mcp_slop_check(req: MCPSlopCheckRequest):
     new_imports = extract_patch_new_imports(req.patch, language=req.language or "python")
     ecosystem = "pypi" if req.language == "python" else "npm"
     dep_alerts = await audit_dependency_risks(new_imports, manifest_text=req.manifest_text, ecosystem=ecosystem)
+    security_sinks = scan_patch_security_sinks(req.patch, language=req.language or "python")
+
+    has_critical_deps = any(a.get("severity") == "CRITICAL" for a in dep_alerts)
+    has_critical_sinks = any(s.get("severity") == "CRITICAL" for s in security_sinks)
 
     risk_score = 10
     if is_cosmetic_slop:
         risk_score += 45
-    if any(a.get("severity") == "CRITICAL" for a in dep_alerts):
+    if has_critical_deps:
         risk_score += 60
     elif len(dep_alerts) > 0:
         risk_score += 20
+    if has_critical_sinks:
+        risk_score += 65
+    elif len(security_sinks) > 0:
+        risk_score += 25
     risk_score = min(risk_score, 100)
 
-    if any(a.get("severity") == "CRITICAL" for a in dep_alerts):
+    if has_critical_sinks:
+        verdict = "SECURITY_SINK_ALERT"
+    elif has_critical_deps:
         verdict = "SLOPSQUATTING_ALERT"
     elif is_cosmetic_slop:
         verdict = "AI_SLOP_SUSPECTED"
@@ -1302,6 +1452,7 @@ async def mcp_slop_check(req: MCPSlopCheckRequest):
         "filters": {
             "cosmetic_slop": {"flagged": is_cosmetic_slop, "ratio": round(ratio, 2)},
             "slopsquatting_sentinel": {"flagged": len(dep_alerts) > 0, "alerts": dep_alerts},
+            "security_sinks": {"flagged": len(security_sinks) > 0, "sinks": security_sinks},
         },
         "recommendation": "All checks passed. Safe to commit." if risk_score < 40 else "Review flagged warnings before submitting PR.",
     }
