@@ -512,6 +512,7 @@ async def analyze_url(
     ast_delta = 30
     suggested_diff: Optional[str] = None
     file_paths: List[str] = []
+    all_repo_file_paths: List[str] = []
     new_imported_pkgs: Set[str] = set()
     dependency_alerts: List[Dict[str, Any]] = []
 
@@ -544,16 +545,30 @@ async def analyze_url(
                     content = await github_client.fetch_file_raw_content(raw_url, token=token)
                     if content:
                         ast_res = extract_universal_ast(content, filename)
-                        parsed_project_files[filename] = ast_res
                         ast_delta += ast_res.get("ast_node_count", 0)
 
+                        matched_in_patch = False
                         for node in ast_res.get("nodes", []):
-                            # Target only functions genuinely touched in the diff hunk
                             if is_node_modified_by_patch(node, modified_lines):
+                                matched_in_patch = True
                                 if node["type"] == "function":
                                     modified_functions.append(node["id"])
                                 elif node["type"] == "test":
                                     modified_tests.append(node["id"])
+
+                        if not matched_in_patch and not ast_res.get("nodes"):
+                            file_node_id = f"{filename}::file_scope"
+                            ast_res["nodes"] = [{
+                                "id": file_node_id,
+                                "label": filename.split("/")[-1],
+                                "type": "file",
+                                "file_path": filename,
+                                "line_range": [1, max(file_info.get("changes", 10), 1)],
+                                "incoming_calls": 0,
+                                "outgoing_calls": 0,
+                            }]
+                            modified_functions.append(file_node_id)
+                        parsed_project_files[filename] = ast_res
 
             if pr_files and pr_files[0].get("patch"):
                 suggested_diff = pr_files[0].get("patch")
@@ -664,10 +679,11 @@ async def analyze_url(
             else:
                 # Top-level repository: fetch tree and stream prioritized source files into RAM
                 tree_files = await github_client.get_repository_tree(owner, repo, branch=default_branch, token=token)
+                all_repo_file_paths = [item.get("path", "") for item in tree_files]
                 logger.info("Found %s code files in %s/%s tree", len(tree_files), owner, repo)
 
                 # Prioritize root entrypoints, core services, and tests
-                for item in tree_files[:12]:
+                for item in tree_files[:16]:
                     f_path = item.get("path", "")
                     content = await github_client.fetch_repo_file_by_path(
                         owner, repo, f_path, ref=default_branch, token=token
@@ -679,7 +695,7 @@ async def analyze_url(
                         for node in ast_res.get("nodes", []):
                             if node["type"] == "test":
                                 modified_tests.append(node["id"])
-                            elif node["type"] == "function" and len(modified_functions) < 3:
+                            elif node["type"] in ("function", "class") and len(modified_functions) < 6:
                                 modified_functions.append(node["id"])
                 live_fetched = len(parsed_project_files) > 0
 
@@ -728,22 +744,44 @@ export class GatewayController {
     # 4. FalkorDB Persistence & Multi-Hop Blast Radius Query
     if graph_client:
         graph_client.save_ast_subgraph(repo_id, commit_sha, all_nodes, stitched_edges)
-        blast = graph_client.get_blast_radius(repo_id, commit_sha, modified_functions, hops=2)
+        if parsed_url["url_type"] == "repo":
+            blast = {"nodes": all_nodes, "edges": stitched_edges}
+        else:
+            blast = graph_client.get_blast_radius(repo_id, commit_sha, modified_functions, hops=2)
     else:
         blast = {"nodes": all_nodes, "edges": stitched_edges}
 
     # 5. Run the 5 Deterministic Pre-Filters (0 LLM Tokens)
-    filter_results = run_deterministic_filters(
-        repo_id=repo_id,
-        commit_sha=commit_sha,
-        modified_functions=modified_functions,
-        modified_tests=modified_tests,
-        new_functions=new_functions,
-        ast_delta=ast_delta,
-        text_diff_lines=text_diff_lines,
-        file_paths=file_paths,
-        dependency_alerts=dependency_alerts,
-    )
+    if parsed_url["url_type"] == "repo":
+        filter_results = {
+            "verdict": "CLEAN",
+            "risk_score": 0,
+            "deterministic_checks": {
+                "untested_call_graph": {"flagged": False, "score": 0.0, "untested_functions": []},
+                "ast_vs_text_ratio": {
+                    "flagged": False,
+                    "ast_node_delta": len(all_nodes),
+                    "text_diff_lines": 0,
+                    "ratio": 1.0,
+                    "is_cosmetic_slop": False,
+                },
+                "dead_code": {"flagged": False, "dead_symbols": []},
+                "maintainer_rules": {"flagged": False, "violations": []},
+                "slopsquatting_sentinel": {"flagged": False, "critical_alert": False, "alerts": []},
+            },
+        }
+    else:
+        filter_results = run_deterministic_filters(
+            repo_id=repo_id,
+            commit_sha=commit_sha,
+            modified_functions=modified_functions,
+            modified_tests=modified_tests,
+            new_functions=new_functions,
+            ast_delta=ast_delta,
+            text_diff_lines=text_diff_lines,
+            file_paths=file_paths,
+            dependency_alerts=dependency_alerts,
+        )
 
     # Action Pills
     action_pills = [
@@ -804,6 +842,7 @@ export class GatewayController {
 
     # Format nodes for blast visualization
     blast_nodes_formatted = []
+    is_repo_view = parsed_url["url_type"] == "repo"
     for node in all_nodes:
         is_mod = node["id"] in modified_functions
         blast_nodes_formatted.append({
@@ -812,10 +851,10 @@ export class GatewayController {
             "type": node.get("type", "function"),
             "file_path": node.get("file_path", ""),
             "line_range": node.get("line_range", [1, 10]),
-            "hop_distance": 0 if is_mod else 1,
-            "change_type": "modified" if is_mod else "affected_caller",
-            "incoming_calls": 2 if is_mod else 0,
-            "outgoing_calls": 1,
+            "hop_distance": 0 if (is_mod or is_repo_view) else 1,
+            "change_type": "unaffected" if is_repo_view else ("modified" if is_mod else "affected_caller"),
+            "incoming_calls": node.get("incoming_calls", 2 if is_mod else 1),
+            "outgoing_calls": node.get("outgoing_calls", 1),
         })
 
     # Dynamic User Mode Detection:
@@ -850,7 +889,7 @@ export class GatewayController {
     onboarding_tour = orchestrator.onboarding_agent.generate_architecture_tour(
         repo_owner=owner,
         repo_name=repo,
-        file_tree=file_paths,
+        file_tree=all_repo_file_paths if all_repo_file_paths else file_paths,
         ast_nodes=all_nodes,
     )
     swarm_telemetry = {
@@ -915,8 +954,13 @@ export class GatewayController {
         },
     }
 
-    # Generate single-shot compressed triage summary via Groq
-    response_payload["summary"] = groq_reasoner.generate_triage_verdict(response_payload)
+    if is_repo_view:
+        response_payload["summary"] = (
+            f"[REPOSITORY ARCHITECTURE INDEXED | Clean]: Successfully mapped {len(all_nodes)} symbols and {len(stitched_edges)} relationships across {len(file_paths)} core modules with {onboarding_tour.get('test_suites_count', 0)} test files. In-memory call graph active and ready for live PR defense."
+        )
+    else:
+        # Generate single-shot compressed triage summary via Groq
+        response_payload["summary"] = groq_reasoner.generate_triage_verdict(response_payload)
     return response_payload
 
 

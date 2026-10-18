@@ -1244,11 +1244,11 @@ export default function GitOSCommandCenter() {
               <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-1">
                 Affected Graph Nodes
               </div>
-              {data.blast_radius_nodes.map((node) => {
+              {data.blast_radius_nodes.map((node, idx) => {
                 const isSelected = selectedNode?.id === node.id;
                 return (
                   <button
-                    key={node.id}
+                    key={`${node.id}-${idx}`}
                     onClick={() => setSelectedNode(node)}
                     className={`w-full text-left p-2.5 rounded-xl border transition flex items-start gap-2.5 ${
                       isSelected

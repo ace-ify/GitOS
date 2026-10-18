@@ -16,8 +16,24 @@ logger = logging.getLogger("gitos.github")
 EXCLUDED_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".pdf",
     ".lock", ".sum", ".min.js", ".min.css", ".map", ".wasm",
-    ".csv", ".tsv", ".parquet", ".zip", ".tar", ".gz"
+    ".csv", ".tsv", ".parquet", ".zip", ".tar", ".gz",
+    ".txt", ".md", ".rst", ".yml", ".yaml", ".toml", ".ini", ".cfg",
+    ".coveragerc", ".gitignore", ".gitattributes", ".editorconfig",
 }
+
+SUPPORTED_CODE_EXTENSIONS = (
+    ".py", ".pyi",
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".go",
+    ".rs",
+    ".java", ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp",
+)
+
+IGNORED_PATH_SEGMENTS = (
+    "/.git/", ".github/", "docs/", "doc/", "site-packages/",
+    "node_modules/", "vendor/", "dist/", "build/", ".venv/",
+    "env/", "__pycache__/", ".pytest_cache/", "coverage/",
+)
 
 
 class GitHubClient:
@@ -95,11 +111,41 @@ class GitHubClient:
                 return []
             data = resp.json()
             tree = data.get("tree", [])
-            code_files = [
-                item for item in tree
-                if item.get("type") == "blob"
-                and not any(item.get("path", "").endswith(ext) for ext in EXCLUDED_EXTENSIONS)
-            ]
+            code_files = []
+            for item in tree:
+                if item.get("type") != "blob":
+                    continue
+                p = item.get("path", "")
+                if not any(p.endswith(ext) for ext in SUPPORTED_CODE_EXTENSIONS):
+                    continue
+                if any(ignored in p for ignored in IGNORED_PATH_SEGMENTS):
+                    continue
+                code_files.append(item)
+
+            # Sort files with intelligent architectural priority:
+            # 0. Entry points (api, app, main, index, server, client, models, routing, __init__)
+            # 1. Core library code (src/, lib/, root package)
+            # 2. Other non-test code
+            # 3. Test files (tests/, test_*, *.spec, *_test)
+            ENTRY_NAMES = {
+                "__init__.py", "api.py", "app.py", "main.py", "core.py", "client.py",
+                "models.py", "sessions.py", "routing.py", "applications.py", "blueprints.py",
+                "index.ts", "server.ts", "app.ts", "main.ts", "index.js",
+                "main.go", "app.go", "lib.rs", "main.rs"
+            }
+            def priority_key(item: Dict[str, Any]) -> int:
+                path = item.get("path", "")
+                fname = path.split("/")[-1].lower()
+                is_test = "test" in fname or "tests/" in path.lower() or "spec" in fname
+                if fname in ENTRY_NAMES and not is_test:
+                    return 0
+                if ("src/" in path or "lib/" in path) and not is_test:
+                    return 1
+                if not is_test:
+                    return 2
+                return 3
+
+            code_files.sort(key=priority_key)
             etag = resp.headers.get("etag")
             if etag:
                 self._etag_cache[url] = (etag, code_files)
@@ -203,7 +249,7 @@ class GitHubClient:
             headers["Authorization"] = f"Bearer {token}"
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 resp = await client.get(raw_url, headers=headers)
                 if resp.status_code == 200:
                     return resp.text

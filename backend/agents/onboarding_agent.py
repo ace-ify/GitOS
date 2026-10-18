@@ -37,31 +37,58 @@ class OnboardingAgent:
         modules = set()
         test_suites = []
 
+        ENTRY_FILE_PATTERNS = (
+            "main.py", "app.py", "api.py", "index.ts", "index.js", "server.ts",
+            "server.js", "main.go", "lib.rs", "main.rs", "cli.py", "client.py",
+            "applications.py", "routing.py", "sessions.py", "__init__.py",
+        )
+
+        # Filter true code files
+        code_files = [
+            p for p in file_tree
+            if any(p.endswith(ext) for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".c", ".cpp"))
+        ]
+
         for path in file_tree:
             p_lower = path.lower()
-            if any(p_lower.endswith(e) for e in ("main.py", "app.py", "index.ts", "index.js", "main.go")):
-                entry_points.append(path)
-            elif "test" in p_lower or p_lower.startswith("tests/"):
+            if "test" in p_lower or p_lower.startswith("tests/") or "spec." in p_lower:
                 test_suites.append(path)
+            elif any(p_lower.endswith(e) for e in ENTRY_FILE_PATTERNS):
+                entry_points.append(path)
+
+        for p in code_files:
+            parts = p.split("/")
+            if len(parts) > 1:
+                if parts[0] in ("src", "lib") and len(parts) > 2:
+                    modules.add(f"{parts[0]}/{parts[1]}")
+                elif parts[0] not in (".github", "docs", "doc", "public", ".git", "tests", "test", "__pycache__"):
+                    modules.add(parts[0])
             else:
-                top_dir = path.split("/")[0] if "/" in path else path
-                if top_dir not in (".github", "docs", "public", ".git"):
-                    modules.add(top_dir)
+                base = parts[0].split(".")[0]
+                if base not in ("setup", "conftest", "test", "manage"):
+                    modules.add(base)
+
+        if not entry_points and code_files:
+            entry_points = [f for f in code_files if "test" not in f.lower()][:3]
 
         # Identify core symbols (classes, main routers)
         core_classes = [n.get("label") for n in ast_nodes if n.get("type") == "class"][:5]
+
+        sorted_modules = sorted(list(modules))[:6]
+        entry_list = entry_points[:4] or (code_files[:2] if code_files else ["main.py"])
 
         return {
             "agent": self.agent_name,
             "status": "completed",
             "repo": f"{repo_owner}/{repo_name}",
-            "core_modules": sorted(list(modules))[:6],
-            "entry_points": entry_points[:4] or ["src/index.ts", "main.py"],
+            "core_modules": sorted_modules or ["core"],
+            "entry_points": entry_list,
             "test_suites_count": len(test_suites),
             "key_classes": core_classes,
             "onboarding_summary": (
-                f"Welcome to {repo_owner}/{repo_name}! The repository is structured into {len(modules)} primary modules. "
-                f"Main entry points are located in {', '.join(entry_points[:2]) or 'root'}, "
+                f"Welcome to {repo_owner}/{repo_name}! The repository is structured into {len(sorted_modules) or 1} primary module(s) "
+                f"({', '.join(sorted_modules[:3]) or 'core'}). "
+                f"Main entry points are located in {', '.join(entry_list[:2])}, "
                 f"with {len(test_suites)} test files ensuring continuous regression safety."
             ),
             "contributor_tips": [
