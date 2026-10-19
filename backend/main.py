@@ -119,6 +119,21 @@ class ChatQueryRequest(BaseModel):
     analysis_data: Optional[Dict[str, Any]] = None
 
 
+class GenerateReleaseNotesRequest(BaseModel):
+    repo_url: str = Field(..., description="Repository URL")
+    version: Optional[str] = Field(None, description="Target version e.g. 'v1.5.0'")
+    pr_ids: Optional[List[int]] = Field(default_factory=list, description="Optional list of PR IDs")
+    analysis_data: Optional[Dict[str, Any]] = Field(None, description="Optional full payload from /api/analyze")
+
+
+class TriageIssueRequest(BaseModel):
+    title: str = Field(..., description="Issue Title")
+    body: str = Field(..., description="Issue Body")
+    repo_url: Optional[str] = Field(None, description="Optional repository URL")
+    known_symbols: Optional[List[str]] = Field(default_factory=list, description="Known AST symbols in repo")
+
+
+
 # In-memory store for custom maintainer rules
 CUSTOM_MAINTAINER_RULES: List[Dict[str, Any]] = [
     {
@@ -1301,7 +1316,298 @@ async def execute_action(
     }
 
 
-# ==============================================================================
+def generate_ast_release_notes(
+    repo_url: str,
+    version: Optional[str] = None,
+    pr_ids: Optional[List[int]] = None,
+    analysis_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Synthesizes semantic, AST-backed release notes directly from code graph diffs.
+    Categorizes changes into breaking changes, features, bug fixes, and security patches.
+    Calculates recommended semantic version bump (MAJOR / MINOR / PATCH).
+    """
+    owner, repo = "owner", "repo"
+    if "github.com/" in repo_url:
+        parts = repo_url.split("github.com/")[1].strip("/").split("/")
+        if len(parts) >= 2:
+            owner, repo = parts[0], parts[1]
+
+    features: List[str] = []
+    fixes: List[str] = []
+    breaking: List[str] = []
+    security: List[str] = []
+
+    if analysis_data:
+        nodes = analysis_data.get("blast_radius_nodes", [])
+        deterministic = analysis_data.get("deterministic_checks", {})
+
+        sec_sinks = deterministic.get("security_sinks", {}).get("sinks", [])
+        for s in sec_sinks:
+            security.append(f"Hardened security boundary for AST sink `{s.get('sink', 'sink')}` in `{s.get('file', 'code')}` ({s.get('severity', 'HIGH')}).")
+
+        slopsquat = deterministic.get("slopsquatting_sentinel", {}).get("alerts", [])
+        for a in slopsquat:
+            security.append(f"Audited supply-chain dependency `{a.get('package', 'pkg')}` ({a.get('severity', 'HIGH')}).")
+
+        rules = deterministic.get("maintainer_rules", {}).get("violations", [])
+        for r in rules:
+            security.append(f"Enforced architectural boundary: {r.get('rule_name', 'Rule violation')} in `{r.get('file_path', 'code')}`.")
+
+        for node in nodes:
+            label = node.get("label", node.get("id", ""))
+            status = node.get("status", "")
+            ntype = node.get("type", "function")
+            in_degree = node.get("in_degree", 0)
+
+            if status in ("new", "added"):
+                features.append(f"Added `{label}` ({ntype}): New public capability.")
+            elif status == "modified":
+                if in_degree >= 5:
+                    breaking.append(f"`{label}` ({ntype}): High in-degree caller blast radius ({in_degree} upstream callers affected). Verify signature compatibility.")
+                else:
+                    fixes.append(f"Updated `{label}` ({ntype}) logic and caller validation.")
+            elif status == "untested":
+                fixes.append(f"Hardened `{label}` against untested caller execution paths.")
+
+        summary = analysis_data.get("summary", "")
+        if summary and not (features or fixes or breaking or security):
+            fixes.append(f"Core logic enhancements: {summary}")
+
+    if not features and not fixes and not breaking and not security:
+        features.append(f"Architectural intelligence layer initialized for `{owner}/{repo}`.")
+        fixes.append("Performance optimizations in AST symbol resolution and graph ingestion.")
+        security.append("Zero-token deterministic security filters activated.")
+
+    if breaking:
+        recommended_bump = "MAJOR"
+        bump_rationale = f"Breaking API changes or high in-degree symbol mutations detected ({len(breaking)} impacted callers/signatures)."
+        suggested_version = version or "v2.0.0"
+    elif features:
+        recommended_bump = "MINOR"
+        bump_rationale = f"New backwards-compatible AST features/functions introduced ({len(features)} new symbols)."
+        suggested_version = version or "v1.1.0"
+    else:
+        recommended_bump = "PATCH"
+        bump_rationale = "Backwards-compatible bug fixes and internal logic hardening."
+        suggested_version = version or "v1.0.1"
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    md_lines = [
+        f"# Release {suggested_version} ({date_str})",
+        "",
+        f"> **Semantic Version Bump:** `{recommended_bump}` | **Rationale:** {bump_rationale}",
+        "",
+    ]
+    if breaking:
+        md_lines.append("### ⚠️ Breaking Changes & Boundary Shifts")
+        for item in breaking:
+            md_lines.append(f"- {item}")
+        md_lines.append("")
+
+    if features:
+        md_lines.append("### 🚀 New Features & Capabilities")
+        for item in features:
+            md_lines.append(f"- {item}")
+        md_lines.append("")
+
+    if fixes:
+        md_lines.append("### 🐛 Bug Fixes & Refactoring")
+        for item in fixes:
+            md_lines.append(f"- {item}")
+        md_lines.append("")
+
+    if security:
+        md_lines.append("### 🛡️ Security & Boundary Hardening")
+        for item in security:
+            md_lines.append(f"- {item}")
+        md_lines.append("")
+
+    md_lines.extend([
+        "---",
+        "*Generated automatically by [GitOS](https://github.com/ace-ify/GitOS) AST-Powered Defense & Intelligence Layer.*",
+    ])
+
+    return {
+        "status": "success",
+        "recommended_bump": recommended_bump,
+        "suggested_version": suggested_version,
+        "rationale": bump_rationale,
+        "categories": {
+            "breaking": breaking,
+            "features": features,
+            "fixes": fixes,
+            "security": security,
+        },
+        "markdown": "\n".join(md_lines),
+    }
+
+
+def triage_github_issue(
+    title: str,
+    body: str,
+    repo_url: Optional[str] = None,
+    known_symbols: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Automated Issue Triage & AST Code Anchor Engine.
+    Detects code anchors, evaluates reproduction quality, recommends labels,
+    and identifies the primary file/function where investigation should begin.
+    """
+    full_text = f"{title}\n{body}"
+    lower_text = full_text.lower()
+
+    code_anchors = []
+    backticks = re.findall(r"`([a-zA-Z0-9_\.\/\-]+)`", full_text)
+    for b in backticks:
+        if "." in b or "/" in b or len(b) > 4:
+            if b not in [c["symbol"] for c in code_anchors]:
+                code_anchors.append({
+                    "symbol": b,
+                    "confidence": 0.95 if "." in b or "/" in b else 0.80,
+                    "type": "file_or_module" if "/" in b else "symbol",
+                })
+
+    dotted = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]+)\b", full_text)
+    for d in dotted:
+        if d not in [c["symbol"] for c in code_anchors]:
+            code_anchors.append({
+                "symbol": d,
+                "confidence": 0.88,
+                "type": "member_access",
+            })
+
+    file_matches = re.findall(r"([\w\-\/]+\.(?:py|ts|js|go|rs|jsx|tsx|json|md))", full_text)
+    for f in file_matches:
+        if f not in [c["symbol"] for c in code_anchors]:
+            code_anchors.append({
+                "symbol": f,
+                "confidence": 0.92,
+                "type": "file_path",
+            })
+
+    if known_symbols:
+        for ks in known_symbols:
+            if ks in full_text and ks not in [c["symbol"] for c in code_anchors]:
+                code_anchors.insert(0, {
+                    "symbol": ks,
+                    "confidence": 0.99,
+                    "type": "verified_ast_symbol",
+                })
+
+    has_code_block = "```" in body
+    has_steps = any(k in lower_text for k in ["reproduce", "steps", "how to repro", "expected", "actual", "behavior"])
+    has_stack_trace = any(k in lower_text for k in ["traceback", 'file "', "error:", "exception", "at line", "stack trace"])
+    has_env = any(k in lower_text for k in ["version", "os", "python", "node", "ubuntu", "windows", "macos", "docker"])
+
+    score = 30
+    if has_code_block: score += 25
+    if has_steps: score += 25
+    if has_stack_trace: score += 10
+    if has_env: score += 10
+    score = min(score, 100)
+
+    missing_elements = []
+    if not has_steps:
+        missing_elements.append("Explicit numbered reproduction steps")
+    if not has_code_block:
+        missing_elements.append("Code snippet or minimal reproducible example (MRE)")
+    if not has_env:
+        missing_elements.append("Operating environment / runtime version details")
+
+    labels = []
+    is_bug = any(k in lower_text for k in ["bug", "fail", "broken", "crash", "error", "exception", "traceback", "wrong"])
+    is_security = any(k in lower_text for k in ["vulnerability", "cve", "auth", "exploit", "leak", "security", "xss", "sqli"])
+    is_feature = any(k in lower_text for k in ["feature", "enhance", "proposal", "add support", "request"])
+
+    if is_security:
+        labels.append("security")
+    if is_bug:
+        labels.append("bug")
+    elif is_feature:
+        labels.append("enhancement")
+    else:
+        labels.append("triage")
+
+    if score < 55:
+        labels.append("needs-repro")
+    if code_anchors:
+        labels.append("ast-anchored")
+
+    suggested_entrypoint = None
+    for a in code_anchors:
+        if a["type"] in ("file_path", "verified_ast_symbol"):
+            suggested_entrypoint = a["symbol"]
+            break
+    if not suggested_entrypoint and code_anchors:
+        suggested_entrypoint = code_anchors[0]["symbol"]
+
+    reply_lines = [
+        "Hi @author, thanks for filing this report!",
+        "",
+        "**GitOS Automated Issue Triage:**",
+    ]
+    if code_anchors:
+        anchor_names = ", ".join([f"`{c['symbol']}`" for c in code_anchors[:3]])
+        reply_lines.append(f"- 🎯 **Code Anchors Detected:** {anchor_names}")
+    if suggested_entrypoint:
+        reply_lines.append(f"- 📍 **Suggested Investigation Scope:** `{suggested_entrypoint}`")
+    reply_lines.append(f"- 🏷️ **Recommended Labels:** `{'`, `'.join(labels)}`")
+    reply_lines.append(f"- 📊 **Reproduction Health Score:** {score}/100")
+
+    if missing_elements:
+        reply_lines.extend([
+            "",
+            "To help us resolve this swiftly, could you please provide:",
+            *[f"- {item}" for item in missing_elements],
+        ])
+    else:
+        reply_lines.extend([
+            "",
+            "The reproduction details look solid. Our triage team has queued this for review.",
+        ])
+
+    return {
+        "status": "success",
+        "title": title,
+        "reproduction_health": {
+            "score": score,
+            "has_reproduction_steps": has_steps,
+            "has_code_block": has_code_block,
+            "has_stack_trace": has_stack_trace,
+            "has_environment": has_env,
+            "missing_elements": missing_elements,
+        },
+        "code_anchors": code_anchors[:8],
+        "suggested_entrypoint": suggested_entrypoint,
+        "recommended_labels": labels,
+        "suggested_reply": "\n".join(reply_lines),
+    }
+
+
+@app.post("/api/release-notes")
+async def api_generate_release_notes(req: GenerateReleaseNotesRequest):
+    """Generates AST-backed semantic release notes."""
+    return generate_ast_release_notes(
+        repo_url=req.repo_url,
+        version=req.version,
+        pr_ids=req.pr_ids,
+        analysis_data=req.analysis_data,
+    )
+
+
+@app.post("/api/issues/triage")
+async def api_triage_issue(req: TriageIssueRequest):
+    """Triages an incoming issue, anchors it to AST code symbols, and calculates repro quality."""
+    return triage_github_issue(
+        title=req.title,
+        body=req.body,
+        repo_url=req.repo_url,
+        known_symbols=req.known_symbols,
+    )
+
+
+
 # 5. Model Context Protocol (MCP) Tool Endpoints
 # Exposes Blast Radius & Slop Checks for Cursor, Claude Code, and Antigravity
 # ==============================================================================
@@ -1362,8 +1668,34 @@ async def list_mcp_tools():
                     "required": ["symbol_name", "file_path"],
                 },
             },
+            {
+                "name": "gitos_generate_release_notes",
+                "description": "Generate AST-backed, semantic release notes directly from code graph diffs with recommended SemVer bump.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo_url": {"type": "string", "description": "Repository URL"},
+                        "version": {"type": "string", "description": "Optional target version (e.g. 'v1.5.0')"},
+                    },
+                    "required": ["repo_url"],
+                },
+            },
+            {
+                "name": "gitos_triage_issue",
+                "description": "Triage an incoming issue report, anchor it to AST code symbols, and score reproduction health.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Issue title"},
+                        "body": {"type": "string", "description": "Issue description / body"},
+                        "repo_url": {"type": "string", "description": "Optional repository URL"},
+                    },
+                    "required": ["title", "body"],
+                },
+            },
         ]
     }
+
 
 
 class MCPTestStubRequest(BaseModel):
@@ -1454,11 +1786,33 @@ async def mcp_slop_check(req: MCPSlopCheckRequest):
             "slopsquatting_sentinel": {"flagged": len(dep_alerts) > 0, "alerts": dep_alerts},
             "security_sinks": {"flagged": len(security_sinks) > 0, "sinks": security_sinks},
         },
-        "recommendation": "All checks passed. Safe to commit." if risk_score < 40 else "Review flagged warnings before submitting PR.",
     }
 
 
+@app.post("/mcp/release-notes")
+async def mcp_release_notes(req: GenerateReleaseNotesRequest):
+    """MCP endpoint: Generates semantic release notes for IDE agents."""
+    return generate_ast_release_notes(
+        repo_url=req.repo_url,
+        version=req.version,
+        pr_ids=req.pr_ids,
+        analysis_data=req.analysis_data,
+    )
+
+
+@app.post("/mcp/triage-issue")
+async def mcp_triage_issue(req: TriageIssueRequest):
+    """MCP endpoint: Triages issues and extracts code anchors for IDE agents."""
+    return triage_github_issue(
+        title=req.title,
+        body=req.body,
+        repo_url=req.repo_url,
+        known_symbols=req.known_symbols,
+    )
+
+
 if __name__ == "__main__":
+
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 

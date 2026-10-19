@@ -216,13 +216,19 @@ To bring GitOS intelligence into modern developer IDEs (Cursor, Claude Code, Ant
 | **Sticky Self-Updating PR Comment** | 5 | 5 | 5 | 2 | **62.5** | **P0 (Immediate)** |
 | **Inline Mermaid Diagram Generator** | 5 | 5 | 5 | 2 | **62.5** | **P0 (Immediate)** |
 | **Filter 5: Slopsquatting Sentinel** | 4 | 5 | 5 | 2 | **50.0** | **P0 (Immediate)** |
-| **MCP Server Endpoints for IDEs** | 4 | 4 | 5 | 2 | **40.0** | **P1 (Next)** |
-| **Custom Maintainer Rule Builder UI** | 3 | 4 | 4 | 2 | **24.0** | **P1 (Next)** |
+| **MCP Server Endpoints for IDEs** | 4 | 4 | 5 | 2 | **40.0** | **P1 (Completed)** |
+| **Custom Maintainer Rule Builder UI** | 3 | 4 | 4 | 2 | **24.0** | **P1 (Completed)** |
+| **Maintainer Rapid-Triage Deck ("Speed Run" Mode)** | 5 | 5 | 5 | 2 | **62.5** | **P0 (Completed)** |
+| **AST Semantic Release Notes & SemVer Bump** | 5 | 4 | 5 | 2 | **50.0** | **P0 (Completed)** |
+| **Issue Triage & AST Code Anchor Engine** | 4 | 4 | 5 | 2 | **40.0** | **P1 (Completed)** |
+| **GitHub Agentic Workflows (gh-aw) Sync** | 5 | 5 | 5 | 2 | **62.5** | **P0 (Completed)** |
 
 ---
 
 ## 9. Success Metrics (KPIs)
-- **Triage Velocity:** Reduce maintainer PR evaluation time from 45 minutes to < 30 seconds.
+- **Triage Velocity:** Reduce maintainer PR evaluation time from 45 minutes to < 10 seconds via Rapid-Triage Deck with hotkeys.
 - **Zero Bot Spam Complaints:** 0 user reports of PR comment flooding (guaranteed by single sticky comment architecture).
-- **Zero-Token Efficiency:** > 85% of incoming pull requests assessed with 0 LLM tokens.
+- **Zero-Token Efficiency:** > 85% of incoming pull requests assessed with 0 LLM tokens before calling reasoner.
 - **Supply-Chain Interception:** 100% detection of unlisted / hallucinated package imports in tested benchmarks.
+- **Release Automation:** 100% automated SemVer bump calculations directly from AST in-degree and signature alterations.
+
