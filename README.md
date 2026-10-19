@@ -180,22 +180,42 @@ git-os/
 
 ---
 
-## 🚀 Quickstart Guide
+## 🚀 Quickstart & Local Setup Guide
 
-### Prerequisites
+The project can be run either via **1-command Docker Compose** (Recommended for judges) or manually.
+
+### Option A: 1-Command Full Stack (Recommended)
+```bash
+# 1. Clone repository & configure environment
+git clone https://github.com/ace-ify/GitOS.git
+cd GitOS
+cp .env.example .env
+
+# 2. Add your GITHUB_TOKEN and optional GROQ_API_KEY to .env
+# 3. Boot FalkorDB, FastAPI Backend, and Next.js Frontend with one command:
+docker-compose up --build
+```
+- Frontend: `http://localhost:3000`
+- Backend API Docs: `http://localhost:8000/docs`
+- FalkorDB: `localhost:6380`
+
+---
+
+### Option B: Manual Local Setup (Step-by-Step)
+
+#### Prerequisites
 - Python 3.11+
 - Node.js 18+
 - Docker (for FalkorDB)
-- GitHub Personal Access Token or OAuth App credentials
-- Groq Cloud API Key
+- GitHub Personal Access Token (`repo` scope)
+- Groq Cloud API Key (Optional, for LLM-assisted patches)
 
-### 1. Launch FalkorDB Graph Database
+#### 1. Launch FalkorDB Graph Database
 ```bash
-# Run FalkorDB container locally
 docker run -p 6379:6379 -it --rm falkordb/falkordb:latest
 ```
 
-### 2. Configure Environment
+#### 2. Configure Environment
 ```bash
 cp .env.example .env
 # Edit .env with your GITHUB_TOKEN and GROQ_API_KEY
