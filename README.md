@@ -78,6 +78,64 @@ Before any LLM is called, GitOS executes 4 algorithmic graph checks directly in 
 
 ---
 
+## 🧠 FalkorDB Graph Model & Cypher Queries (Hackathon Focus)
+
+GitOS utilizes FalkorDB as its core context and reasoning engine. Without FalkorDB, deterministic multi-hop reasoning is impossible.
+
+### 1. Graph Data Model
+- **Nodes**:
+  - `(:Function {id, name, file_path, line_start, line_end, commit_sha})`
+  - `(:Class {id, name, file_path, commit_sha})`
+  - `(:Module {path, commit_sha})`
+  - `(:Test {id, name, file_path})`
+  - `(:MaintainerRule {rule_id, description, forbidden_pattern})`
+- **Edges**:
+  - `[:CALLS]` — Inter-functional dependency
+  - `[:IMPORTS]` — Module-level coupling
+  - `[:TESTED_BY]` — Links functions to test symbols
+  - `[:DEFINES]` — Module/Class defining a symbol
+
+### 2. Primary Cypher Queries Used by Agents
+
+#### A. Multi-Hop Blast Radius Traversal (Track 1)
+Identifies every downstream caller up to $N$ hops that will break if target functions are modified:
+```cypher
+MATCH (target:Function) WHERE target.id IN $targets
+MATCH path = (caller:Function)-[:CALLS*1..$hops]->(target)
+RETURN caller.id, target.id, length(path) AS hop_distance
+ORDER BY hop_distance ASC
+LIMIT 100;
+```
+
+#### B. Dead Code / AI-Slop Hallucination Detection (Track 1 & Track 2)
+Detects functions introduced by LLMs that have zero incoming call references in the repository topology:
+```cypher
+MATCH (fn:Function {commit_sha: $commit_sha})
+WHERE NOT fn.name STARTS WITH 'test_' AND NOT fn.name STARTS WITH '__'
+OPTIONAL MATCH (caller:Function)-[:CALLS]->(fn)
+WITH fn, count(caller) AS in_degree
+WHERE in_degree = 0
+RETURN fn.id, fn.file_path, fn.line_start;
+```
+
+#### C. Architectural Boundary Guard (Track 3: Company Brain)
+Ensures PRs do not violate organizational or architectural layer boundaries (e.g., UI modules invoking raw DB clients directly):
+```cypher
+MATCH (src:Function)-[r:CALLS|IMPORTS]->(tgt:Function)
+WHERE src.file_path CONTAINS 'frontend' AND (tgt.file_path CONTAINS 'db' OR tgt.file_path CONTAINS 'models')
+RETURN src.file_path AS violator, tgt.file_path AS target_forbidden, type(r) AS relation;
+```
+
+#### D. Persistent Episodic Memory & State Handoff (Track 2)
+Each repository and pull request gets an isolated graph (`gitos_{owner}_{repo}`), enabling agents to persist context, diff snapshots, and maintainer decisions across sessions:
+```cypher
+MERGE (m:MaintainerMemory {repo: $repo, pr_number: $pr})
+SET m.last_risk_score = $score, m.triaged_at = timestamp(), m.agent_status = $status
+RETURN m;
+```
+
+---
+
 ## 🎭 Dual-Mode Experience
 
 GitOS dynamically switches roles based on GitHub OAuth scopes:
